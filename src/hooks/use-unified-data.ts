@@ -163,14 +163,15 @@ export function useUnifiedData(onTaskExecute?: (task: ScheduledTask) => void): U
         const newList: AppOfficer[] = dbOfficers.map(officer => {
           const existing = existingMap.get(officer.id);
           if (existing) {
-            // Update basic info but keep duty history
+            // CRITICAL: Always use current_status from Supabase (dbOfficers) for realtime sync
+            // This ensures status changes from other devices are immediately reflected
             return {
               ...existing,
               name: officer.name,
               rank: officer.rank,
               badgeNumber: officer.badge_number || undefined,
               unit: officer.unit,
-              currentStatus: officer.current_status,
+              currentStatus: officer.current_status, // Always use fresh status from Supabase
             };
           }
           // New officer - create with empty duty history
