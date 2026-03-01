@@ -225,6 +225,62 @@ CREATE POLICY "Allow authenticated users to delete duty records"
     USING (true);
 
 -- ============================================================================
+-- TABLE: scheduled_tasks
+-- Stores scheduled status changes for officers
+-- ============================================================================
+CREATE TABLE scheduled_tasks (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    officer_id UUID NOT NULL REFERENCES officers(id) ON DELETE CASCADE,
+    scheduled_status TEXT NOT NULL CHECK (scheduled_status IN ('off-duty', 'on-duty')),
+    scheduled_time TIMESTAMPTZ NOT NULL,
+    timezone TEXT NOT NULL DEFAULT 'UTC',
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'executed', 'cancelled', 'failed')),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    executed_at TIMESTAMPTZ,
+    cancelled_at TIMESTAMPTZ,
+    created_by UUID REFERENCES auth.users(id) ON DELETE SET NULL
+);
+
+-- Add indexes for scheduled_tasks table
+CREATE INDEX idx_scheduled_tasks_officer_id ON scheduled_tasks(officer_id);
+CREATE INDEX idx_scheduled_tasks_status ON scheduled_tasks(status);
+CREATE INDEX idx_scheduled_tasks_scheduled_time ON scheduled_tasks(scheduled_time);
+CREATE INDEX idx_scheduled_tasks_officer_status ON scheduled_tasks(officer_id, status);
+
+-- Trigger for scheduled_tasks table
+CREATE TRIGGER update_scheduled_tasks_updated_at
+    BEFORE UPDATE ON scheduled_tasks
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+-- Enable RLS on scheduled_tasks table
+ALTER TABLE scheduled_tasks ENABLE ROW LEVEL SECURITY;
+
+-- Policy: Allow all authenticated users to read scheduled_tasks
+CREATE POLICY "Allow authenticated users to read scheduled_tasks"
+    ON scheduled_tasks FOR SELECT
+    TO authenticated
+    USING (true);
+
+-- Policy: Allow all authenticated users to insert scheduled_tasks
+CREATE POLICY "Allow authenticated users to insert scheduled_tasks"
+    ON scheduled_tasks FOR INSERT
+    TO authenticated
+    WITH CHECK (true);
+
+-- Policy: Allow all authenticated users to update scheduled_tasks
+CREATE POLICY "Allow authenticated users to update scheduled_tasks"
+    ON scheduled_tasks FOR UPDATE
+    TO authenticated
+    USING (true);
+
+-- Policy: Allow all authenticated users to delete scheduled_tasks
+CREATE POLICY "Allow authenticated users to delete scheduled_tasks"
+    ON scheduled_tasks FOR DELETE
+    TO authenticated
+    USING (true);
+
+-- ============================================================================
 -- STORED PROCEDURES / FUNCTIONS FOR APP OPERATIONS
 -- ============================================================================
 

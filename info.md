@@ -107,10 +107,36 @@ Task structure:
 4. **View scheduled tasks**: See all pending and completed tasks in the Scheduled Tasks panel
 5. **Cancel schedule**: Click the trash icon on a pending task to cancel
 
+## Supabase Integration
+
+The application now includes full Supabase integration for cloud persistence:
+
+### Features
+- **Cloud Storage**: All data stored in PostgreSQL database
+- **Real-time Sync**: Live updates across all connected clients
+- **Offline Fallback**: Falls back to localStorage when Supabase is not configured
+- **Row Level Security**: Secure data access with RLS policies
+- **Full-text Search**: Search officers by name, rank, unit, or badge number
+
+### Setup
+See [`SUPABASE_SETUP.md`](SUPABASE_SETUP.md) for detailed setup instructions.
+
+### Quick Start
+1. Copy `.env.example` to `.env`
+2. Add your Supabase URL and anon key
+3. Run the schema in [`supabase-schema.sql`](supabase-schema.sql)
+4. The app automatically connects to Supabase
+
+### Hooks
+- [`useSupabaseOfficers`](src/hooks/use-supabase-officers.ts) - Officer CRUD operations
+- [`useSupabaseDutyRecords`](src/hooks/use-supabase-duty-records.ts) - Duty record management
+- [`useSupabaseScheduledTasks`](src/hooks/use-supabase-scheduled-tasks.ts) - Scheduled task persistence
+- [`useUnifiedData`](src/hooks/use-unified-data.ts) - Combines localStorage + Supabase
+
 ## Future Enhancements
 
-- Supabase integration for cloud persistence
 - Push notification permissions
 - Mobile app with native notifications
 - Recurring schedule support
 - Admin dashboard for multiple stations
+- Authentication and user roles
