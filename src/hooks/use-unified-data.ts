@@ -39,6 +39,7 @@ interface UseUnifiedDataReturn {
   loading: boolean;
   error: string | null;
   isSupabaseConnected: boolean;
+  realtimeStatus: 'connected' | 'disconnected' | 'reconnecting';
 
   // Officer operations
   addOfficer: (name: string, rank: string, badgeNumber?: string, unit?: string) => Promise<void>;
@@ -82,6 +83,7 @@ export function useUnifiedData(onTaskExecute?: (task: ScheduledTask) => void): U
     officers: dbOfficers,
     loading: officersLoading,
     error: officersError,
+    connectionStatus: officersConnectionStatus,
     addOfficer: addDbOfficer,
     updateOfficer: updateDbOfficer,
     deleteOfficer: deleteDbOfficer,
@@ -176,12 +178,16 @@ export function useUnifiedData(onTaskExecute?: (task: ScheduledTask) => void): U
     unit?: string
   ) => {
     if (supabaseAvailable) {
-      await addDbOfficer({
+      const result = await addDbOfficer({
         name,
         rank,
         badge_number: badgeNumber || null,
         unit: unit || 'Unassigned',
+        current_status: 'off-duty',
       });
+      if (!result) {
+        throw new Error('Failed to add officer to Supabase');
+      }
     } else {
       const newOfficer: AppOfficer = {
         id: Date.now().toString(36) + Math.random().toString(36).substr(2),
@@ -224,7 +230,7 @@ export function useUnifiedData(onTaskExecute?: (task: ScheduledTask) => void): U
     }
   }, [supabaseAvailable, deleteDbOfficer]);
 
-  // Check in officer
+  // Check in officer with optimistic update
   const checkInOfficer = useCallback(async (officerId: string) => {
     const now = new Date().toLocaleTimeString('en-PH', {
       hour: '2-digit',
@@ -234,28 +240,44 @@ export function useUnifiedData(onTaskExecute?: (task: ScheduledTask) => void): U
     });
     const today = new Date().toISOString().split('T')[0];
 
-    if (supabaseAvailable) {
-      await checkInDbOfficer(officerId);
-    } else {
-      setLocalOfficers(prev =>
-        prev.map(officer => {
-          if (officer.id === officerId) {
-            return {
-              ...officer,
-              currentStatus: 'on-duty',
-              dutyHistory: [
-                ...officer.dutyHistory,
-                { timeIn: now, timeOut: null, date: today },
-              ],
-            };
-          }
-          return officer;
-        })
-      );
-    }
-  }, [supabaseAvailable, checkInDbOfficer]);
+    // Store original state for potential rollback
+    const originalOfficers = supabaseAvailable ? [...syncedOfficers] : [...localOfficers];
 
-  // Check out officer
+    // Optimistic update - update UI immediately
+    const optimisticUpdate = (prev: AppOfficer[]) =>
+      prev.map(officer => {
+        if (officer.id === officerId) {
+          return {
+            ...officer,
+            currentStatus: 'on-duty' as const,
+            dutyHistory: [
+              ...officer.dutyHistory,
+              { timeIn: now, timeOut: null, date: today },
+            ],
+          };
+        }
+        return officer;
+      });
+
+    if (supabaseAvailable) {
+      setSyncedOfficers(prev => optimisticUpdate(prev));
+    } else {
+      setLocalOfficers(prev => optimisticUpdate(prev));
+    }
+
+    // Async persistence to Supabase
+    if (supabaseAvailable) {
+      try {
+        await checkInDbOfficer(officerId);
+      } catch (error) {
+        // Rollback on error
+        setSyncedOfficers(originalOfficers);
+        throw error;
+      }
+    }
+  }, [supabaseAvailable, checkInDbOfficer, syncedOfficers, localOfficers]);
+
+  // Check out officer with optimistic update
   const checkOutOfficer = useCallback(async (officerId: string) => {
     const now = new Date().toLocaleTimeString('en-PH', {
       hour: '2-digit',
@@ -264,28 +286,44 @@ export function useUnifiedData(onTaskExecute?: (task: ScheduledTask) => void): U
       hour12: true,
     });
 
-    if (supabaseAvailable) {
-      await checkOutDbOfficer(officerId);
-    } else {
-      setLocalOfficers(prev =>
-        prev.map(officer => {
-          if (officer.id === officerId) {
-            const updatedHistory = [...officer.dutyHistory];
-            const lastRecord = updatedHistory[updatedHistory.length - 1];
-            if (lastRecord && !lastRecord.timeOut) {
-              lastRecord.timeOut = now;
-            }
-            return {
-              ...officer,
-              currentStatus: 'off-duty',
-              dutyHistory: updatedHistory,
-            };
+    // Store original state for potential rollback
+    const originalOfficers = supabaseAvailable ? [...syncedOfficers] : [...localOfficers];
+
+    // Optimistic update - update UI immediately
+    const optimisticUpdate = (prev: AppOfficer[]) =>
+      prev.map(officer => {
+        if (officer.id === officerId) {
+          const updatedHistory = [...officer.dutyHistory];
+          const lastRecord = updatedHistory[updatedHistory.length - 1];
+          if (lastRecord && !lastRecord.timeOut) {
+            lastRecord.timeOut = now;
           }
-          return officer;
-        })
-      );
+          return {
+            ...officer,
+            currentStatus: 'off-duty' as const,
+            dutyHistory: updatedHistory,
+          };
+        }
+        return officer;
+      });
+
+    if (supabaseAvailable) {
+      setSyncedOfficers(prev => optimisticUpdate(prev));
+    } else {
+      setLocalOfficers(prev => optimisticUpdate(prev));
     }
-  }, [supabaseAvailable, checkOutDbOfficer]);
+
+    // Async persistence to Supabase
+    if (supabaseAvailable) {
+      try {
+        await checkOutDbOfficer(officerId);
+      } catch (error) {
+        // Rollback on error
+        setSyncedOfficers(originalOfficers);
+        throw error;
+      }
+    }
+  }, [supabaseAvailable, checkOutDbOfficer, syncedOfficers, localOfficers]);
 
   // Schedule task
   const scheduleTask = useCallback(async (
@@ -333,6 +371,7 @@ export function useUnifiedData(onTaskExecute?: (task: ScheduledTask) => void): U
     loading,
     error,
     isSupabaseConnected: supabaseAvailable,
+    realtimeStatus: supabaseAvailable ? officersConnectionStatus : 'disconnected',
     addOfficer,
     updateOfficer,
     deleteOfficer,

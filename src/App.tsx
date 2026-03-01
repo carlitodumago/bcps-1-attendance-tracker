@@ -39,10 +39,7 @@ import {
   ChevronRight,
   CalendarDays,
   Clock,
-  Timer,
-  Database,
-  Wifi,
-  WifiOff
+  Timer
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Toaster } from '@/components/ui/sonner'
@@ -77,7 +74,7 @@ function App() {
   const {
     officers,
     loading,
-    isSupabaseConnected,
+    realtimeStatus,
     addOfficer,
     updateOfficer,
     deleteOfficer,
@@ -359,27 +356,6 @@ function App() {
       </header>
 
       <main className="container mx-auto px-4 py-8 max-w-7xl">
-        {/* Connection Status */}
-        <div className="flex items-center justify-end gap-2 mb-4">
-          <Badge 
-            variant={isSupabaseConnected ? "default" : "secondary"}
-            className={`flex items-center gap-1 ${isSupabaseConnected ? 'bg-green-600' : ''}`}
-          >
-            {isSupabaseConnected ? (
-              <>
-                <Wifi className="w-3 h-3" />
-                <Database className="w-3 h-3" />
-                Supabase Connected
-              </>
-            ) : (
-              <>
-                <WifiOff className="w-3 h-3" />
-                Local Mode
-              </>
-            )}
-          </Badge>
-        </div>
-
         {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
           <Card className="bg-gradient-to-r from-green-500 to-green-600 text-white border-0 shadow-lg">
@@ -588,16 +564,7 @@ function App() {
               />
             </div>
 
-            {/* Loading State */}
-            {loading && (
-              <div className="text-center py-8 text-gray-500">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div>
-                <p className="text-sm">Loading officers...</p>
-              </div>
-            )}
-
             {/* Officer List */}
-            {!loading && (
               <Card className="border-2 border-gray-100 shadow-xl bg-white/80 backdrop-blur">
                 <CardHeader className="bg-gradient-to-r from-gray-50 to-white border-b border-gray-100 py-3">
                   <CardTitle className="flex items-center gap-2 text-gray-700 text-base">
@@ -606,6 +573,17 @@ function App() {
                     <Badge variant="secondary" className="ml-2 text-xs">
                       {filteredOfficers.length}
                     </Badge>
+                    {/* Realtime Status Indicator */}
+                    <span
+                      className={`ml-auto w-2 h-2 rounded-full ${
+                        realtimeStatus === 'connected'
+                          ? 'bg-green-500 animate-pulse'
+                          : realtimeStatus === 'reconnecting'
+                          ? 'bg-yellow-500 animate-pulse'
+                          : 'bg-gray-400'
+                      }`}
+                      title={`Realtime: ${realtimeStatus}`}
+                    />
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="p-0 max-h-80 overflow-y-auto">
@@ -689,7 +667,6 @@ function App() {
                   )}
                 </CardContent>
               </Card>
-            )}
 
             {/* Add Officer Card */}
             <Card className="border-2 border-blue-100 shadow-xl bg-white/80 backdrop-blur">

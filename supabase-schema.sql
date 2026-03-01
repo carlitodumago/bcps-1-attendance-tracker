@@ -176,52 +176,52 @@ ORDER BY month DESC, o.name;
 ALTER TABLE officers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE duty_records ENABLE ROW LEVEL SECURITY;
 
--- Policy: Allow all authenticated users to read officers
-CREATE POLICY "Allow authenticated users to read officers"
+-- Policy: Allow all users (including anonymous) to read officers
+CREATE POLICY "Allow all users to read officers"
     ON officers FOR SELECT
-    TO authenticated
+    TO anon, authenticated
     USING (true);
 
--- Policy: Allow all authenticated users to insert officers
-CREATE POLICY "Allow authenticated users to insert officers"
+-- Policy: Allow all users (including anonymous) to insert officers
+CREATE POLICY "Allow all users to insert officers"
     ON officers FOR INSERT
-    TO authenticated
+    TO anon, authenticated
     WITH CHECK (true);
 
--- Policy: Allow all authenticated users to update officers
-CREATE POLICY "Allow authenticated users to update officers"
+-- Policy: Allow all users (including anonymous) to update officers
+CREATE POLICY "Allow all users to update officers"
     ON officers FOR UPDATE
-    TO authenticated
+    TO anon, authenticated
     USING (true);
 
--- Policy: Allow all authenticated users to delete officers
-CREATE POLICY "Allow authenticated users to delete officers"
+-- Policy: Allow all users (including anonymous) to delete officers
+CREATE POLICY "Allow all users to delete officers"
     ON officers FOR DELETE
-    TO authenticated
+    TO anon, authenticated
     USING (true);
 
--- Policy: Allow all authenticated users to read duty records
-CREATE POLICY "Allow authenticated users to read duty records"
+-- Policy: Allow all users to read duty records
+CREATE POLICY "Allow all users to read duty records"
     ON duty_records FOR SELECT
-    TO authenticated
+    TO anon, authenticated
     USING (true);
 
--- Policy: Allow all authenticated users to insert duty records
-CREATE POLICY "Allow authenticated users to insert duty records"
+-- Policy: Allow all users to insert duty records
+CREATE POLICY "Allow all users to insert duty records"
     ON duty_records FOR INSERT
-    TO authenticated
+    TO anon, authenticated
     WITH CHECK (true);
 
--- Policy: Allow all authenticated users to update duty records
-CREATE POLICY "Allow authenticated users to update duty records"
+-- Policy: Allow all users to update duty records
+CREATE POLICY "Allow all users to update duty records"
     ON duty_records FOR UPDATE
-    TO authenticated
+    TO anon, authenticated
     USING (true);
 
--- Policy: Allow all authenticated users to delete duty records
-CREATE POLICY "Allow authenticated users to delete duty records"
+-- Policy: Allow all users to delete duty records
+CREATE POLICY "Allow all users to delete duty records"
     ON duty_records FOR DELETE
-    TO authenticated
+    TO anon, authenticated
     USING (true);
 
 -- ============================================================================
@@ -256,28 +256,28 @@ CREATE TRIGGER update_scheduled_tasks_updated_at
 -- Enable RLS on scheduled_tasks table
 ALTER TABLE scheduled_tasks ENABLE ROW LEVEL SECURITY;
 
--- Policy: Allow all authenticated users to read scheduled_tasks
-CREATE POLICY "Allow authenticated users to read scheduled_tasks"
+-- Policy: Allow all users to read scheduled_tasks
+CREATE POLICY "Allow all users to read scheduled_tasks"
     ON scheduled_tasks FOR SELECT
-    TO authenticated
+    TO anon, authenticated
     USING (true);
 
--- Policy: Allow all authenticated users to insert scheduled_tasks
-CREATE POLICY "Allow authenticated users to insert scheduled_tasks"
+-- Policy: Allow all users to insert scheduled_tasks
+CREATE POLICY "Allow all users to insert scheduled_tasks"
     ON scheduled_tasks FOR INSERT
-    TO authenticated
+    TO anon, authenticated
     WITH CHECK (true);
 
--- Policy: Allow all authenticated users to update scheduled_tasks
-CREATE POLICY "Allow authenticated users to update scheduled_tasks"
+-- Policy: Allow all users to update scheduled_tasks
+CREATE POLICY "Allow all users to update scheduled_tasks"
     ON scheduled_tasks FOR UPDATE
-    TO authenticated
+    TO anon, authenticated
     USING (true);
 
--- Policy: Allow all authenticated users to delete scheduled_tasks
-CREATE POLICY "Allow authenticated users to delete scheduled_tasks"
+-- Policy: Allow all users to delete scheduled_tasks
+CREATE POLICY "Allow all users to delete scheduled_tasks"
     ON scheduled_tasks FOR DELETE
-    TO authenticated
+    TO anon, authenticated
     USING (true);
 
 -- ============================================================================

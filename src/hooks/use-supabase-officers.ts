@@ -371,7 +371,7 @@ export function useSupabaseOfficers(retryConfig: RetryConfig = DEFAULT_RETRY_CON
         const errorMessage = parseError(err);
         setError(errorMessage);
       }
-      return null;
+      throw err;
     }
   }, [supabaseAvailable, officers]);
 
