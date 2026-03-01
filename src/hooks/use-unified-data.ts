@@ -338,6 +338,19 @@ export function useUnifiedData(onTaskExecute?: (task: ScheduledTask) => void): U
     }
   }, [supabaseAvailable, deleteDbOfficer]);
 
+  // Refs to track latest state for callbacks
+  const syncedOfficersRef = useRef(syncedOfficers);
+  const localOfficersRef = useRef(localOfficers);
+  
+  // Update refs when state changes
+  useEffect(() => {
+    syncedOfficersRef.current = syncedOfficers;
+  }, [syncedOfficers]);
+  
+  useEffect(() => {
+    localOfficersRef.current = localOfficers;
+  }, [localOfficers]);
+
   // Check in officer with optimistic update
   const checkInOfficer = useCallback(async (officerId: string) => {
     const now = new Date().toLocaleTimeString('en-PH', {
@@ -348,8 +361,8 @@ export function useUnifiedData(onTaskExecute?: (task: ScheduledTask) => void): U
     });
     const today = new Date().toISOString().split('T')[0];
 
-    // Store original state for potential rollback
-    const originalOfficers = supabaseAvailable ? [...syncedOfficers] : [...localOfficers];
+    // Store original state for potential rollback (using refs to get latest)
+    const originalOfficers = supabaseAvailable ? [...syncedOfficersRef.current] : [...localOfficersRef.current];
 
     // Optimistic update - update UI immediately
     const optimisticUpdate = (prev: AppOfficer[]) =>
@@ -383,7 +396,7 @@ export function useUnifiedData(onTaskExecute?: (task: ScheduledTask) => void): U
         throw error;
       }
     }
-  }, [supabaseAvailable, checkInDbOfficer, syncedOfficers, localOfficers]);
+  }, [supabaseAvailable, checkInDbOfficer]);
 
   // Check out officer with optimistic update
   const checkOutOfficer = useCallback(async (officerId: string) => {
@@ -394,8 +407,8 @@ export function useUnifiedData(onTaskExecute?: (task: ScheduledTask) => void): U
       hour12: true,
     });
 
-    // Store original state for potential rollback
-    const originalOfficers = supabaseAvailable ? [...syncedOfficers] : [...localOfficers];
+    // Store original state for potential rollback (using refs to get latest)
+    const originalOfficers = supabaseAvailable ? [...syncedOfficersRef.current] : [...localOfficersRef.current];
 
     // Optimistic update - update UI immediately
     const optimisticUpdate = (prev: AppOfficer[]) =>
@@ -431,7 +444,7 @@ export function useUnifiedData(onTaskExecute?: (task: ScheduledTask) => void): U
         throw error;
       }
     }
-  }, [supabaseAvailable, checkOutDbOfficer, syncedOfficers, localOfficers]);
+  }, [supabaseAvailable, checkOutDbOfficer]);
 
   // Schedule task
   const scheduleTask = useCallback(async (
