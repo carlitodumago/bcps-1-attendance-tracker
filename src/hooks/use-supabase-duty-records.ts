@@ -47,6 +47,7 @@ interface UseSupabaseDutyRecordsReturn {
   getDutyStats: (startDate: Date, endDate: Date) => Promise<{ duty_date: string; total_officers: number; officers_on_duty: number; officers_off_duty: number }[]>;
   refreshData: () => Promise<void>;
   retryConnection: () => Promise<void>;
+  onDutyRecordsChange?: (callback: () => void) => () => void;
 }
 
 // ============================================================================
@@ -142,8 +143,27 @@ export function useSupabaseDutyRecords(retryConfig: RetryConfig = DEFAULT_RETRY_
   const subscriptionRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const retryAttemptRef = useRef(0);
   const isMountedRef = useRef(true);
+  const dutyRecordsChangeCallbacks = useRef<Set<() => void>>(new Set());
 
   const supabaseAvailable = isSupabaseConfigured();
+
+  // Callback registration for duty records changes
+  const onDutyRecordsChange = useCallback((callback: () => void) => {
+    dutyRecordsChangeCallbacks.current.add(callback);
+    return () => {
+      dutyRecordsChangeCallbacks.current.delete(callback);
+    };
+  }, []);
+
+  const notifyDutyRecordsChange = useCallback(() => {
+    dutyRecordsChangeCallbacks.current.forEach(callback => {
+      try {
+        callback();
+      } catch (err) {
+        console.error('Error in duty records change callback:', err);
+      }
+    });
+  }, []);
 
   // ============================================================================
   // Core Fetch with Retry Logic
@@ -746,6 +766,7 @@ export function useSupabaseDutyRecords(retryConfig: RetryConfig = DEFAULT_RETRY_
               return current;
             });
             fetchTodaySummary();
+            notifyDutyRecordsChange();
           }
         )
         .subscribe((status) => {
@@ -817,5 +838,6 @@ export function useSupabaseDutyRecords(retryConfig: RetryConfig = DEFAULT_RETRY_
     getDutyStats,
     refreshData,
     retryConnection,
+    onDutyRecordsChange,
   };
 }

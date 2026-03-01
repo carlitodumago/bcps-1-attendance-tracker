@@ -4,7 +4,7 @@
 // Falls back to localStorage when Supabase is not configured
 // ============================================================================
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { isSupabaseConfigured } from '../lib/supabase';
 import { useSupabaseOfficers } from './use-supabase-officers';
 import { useSupabaseDutyRecords } from './use-supabase-duty-records';
@@ -94,6 +94,7 @@ export function useUnifiedData(onTaskExecute?: (task: ScheduledTask) => void): U
     checkInOfficer: checkInDbOfficer,
     checkOutOfficer: checkOutDbOfficer,
     fetchDutyRecordsForOfficer,
+    onDutyRecordsChange,
     loading: dutyLoading,
     error: dutyError,
   } = useSupabaseDutyRecords();
@@ -145,25 +146,49 @@ export function useUnifiedData(onTaskExecute?: (task: ScheduledTask) => void): U
 
   // Sync Supabase officers to local format when they change
   const [syncedOfficers, setSyncedOfficers] = useState<AppOfficer[]>([]);
+  const hasInitiallySynced = useRef(false);
 
-  useEffect(() => {
-    if (supabaseAvailable && dbOfficers.length > 0) {
-      const syncOfficers = async () => {
-        const appOfficers: AppOfficer[] = [];
-        for (const officer of dbOfficers) {
-          const dutyRecords = await fetchDutyRecordsForOfficer(officer.id);
-          const dutyHistory = dutyRecords.map(record => ({
-            timeIn: record.time_in,
-            timeOut: record.time_out,
-            date: record.duty_date,
-          }));
-          appOfficers.push(dbOfficerToAppOfficer(officer, dutyHistory));
-        }
-        setSyncedOfficers(appOfficers);
-      };
-      syncOfficers();
+  const syncOfficersWithDutyRecords = useCallback(async () => {
+    if (!supabaseAvailable || dbOfficers.length === 0) return;
+    
+    const appOfficers: AppOfficer[] = [];
+    for (const officer of dbOfficers) {
+      const dutyRecords = await fetchDutyRecordsForOfficer(officer.id);
+      const dutyHistory = dutyRecords.map(record => ({
+        timeIn: record.time_in,
+        timeOut: record.time_out,
+        date: record.duty_date,
+      }));
+      appOfficers.push(dbOfficerToAppOfficer(officer, dutyHistory));
     }
+    setSyncedOfficers(appOfficers);
+    hasInitiallySynced.current = true;
   }, [supabaseAvailable, dbOfficers, fetchDutyRecordsForOfficer]);
+
+  // Initial sync and duty records change subscription
+  useEffect(() => {
+    if (!supabaseAvailable) return;
+    
+    // Initial sync - use timeout to avoid cascading render warning
+    if (!hasInitiallySynced.current && dbOfficers.length > 0) {
+      const timeoutId = setTimeout(() => {
+        syncOfficersWithDutyRecords();
+      }, 0);
+      return () => clearTimeout(timeoutId);
+    }
+    
+    // Subscribe to duty records changes for bidirectional sync
+    let unsubscribe: (() => void) | undefined;
+    if (onDutyRecordsChange) {
+      unsubscribe = onDutyRecordsChange(() => {
+        syncOfficersWithDutyRecords();
+      });
+    }
+    
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, [supabaseAvailable, dbOfficers.length, onDutyRecordsChange, syncOfficersWithDutyRecords]);
 
   // Use appropriate data source
   const officers = supabaseAvailable ? syncedOfficers : localOfficers;
