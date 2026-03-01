@@ -1,12 +1,29 @@
 // ============================================================================
-// Supabase Scheduled Tasks Hook
+// Production-Ready Supabase Scheduled Tasks Hook
 // Handles scheduled status changes with Supabase persistence
+// Features: Real-time updates, error handling, retry logic, optimistic updates
 // ============================================================================
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
-import type { ScheduledTaskDB } from '../types/database.ts';
-import type { ScheduledTask, ScheduledStatus } from '../types/scheduler';
+import type { ScheduledTaskDB } from '../types/database';
+import type { ScheduledTask, ScheduledStatus, CountdownInfo } from '../types/scheduler';
+
+// ============================================================================
+// Types
+// ============================================================================
+
+interface QueryOptions {
+  orderBy?: { column: string; ascending?: boolean };
+  filters?: { column: string; value: unknown; operator?: 'eq' | 'neq' }[];
+  limit?: number;
+}
+
+interface RetryConfig {
+  maxRetries: number;
+  baseDelay: number;
+  maxDelay: number;
+}
 
 interface UseSupabaseScheduledTasksReturn {
   tasks: ScheduledTask[];
@@ -14,6 +31,8 @@ interface UseSupabaseScheduledTasksReturn {
   executedTasks: ScheduledTask[];
   loading: boolean;
   error: string | null;
+  isRetrying: boolean;
+  connectionStatus: 'connected' | 'disconnected' | 'reconnecting';
   addTask: (
     officerId: string,
     officerName: string,
@@ -21,44 +40,165 @@ interface UseSupabaseScheduledTasksReturn {
     scheduledTime: Date
   ) => Promise<ScheduledTask | null>;
   cancelTask: (taskId: string) => Promise<boolean>;
+  executeTask: (taskId: string) => Promise<boolean>;
   getTaskForOfficer: (officerId: string) => ScheduledTask | undefined;
   fetchTasks: () => Promise<void>;
-  executeTask: (taskId: string) => Promise<boolean>;
+  getCountdown: (scheduledTime: string) => CountdownInfo;
+  refreshTasks: () => Promise<void>;
+  retryConnection: () => Promise<void>;
 }
 
-export function useSupabaseScheduledTasks(): UseSupabaseScheduledTasksReturn {
+// ============================================================================
+// Constants
+// ============================================================================
+
+const DEFAULT_RETRY_CONFIG: RetryConfig = {
+  maxRetries: 5,
+  baseDelay: 1000,
+  maxDelay: 30000,
+};
+
+const SCHEDULED_TASKS_STORAGE_KEY = 'bcps-1-scheduled-tasks-backup';
+
+// ============================================================================
+// Utility Functions
+// ============================================================================
+
+const getRetryDelay = (attempt: number, config: RetryConfig): number => {
+  const exponentialDelay = config.baseDelay * Math.pow(2, attempt);
+  return Math.min(exponentialDelay, config.maxDelay);
+};
+
+const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
+
+const parseError = (error: unknown): string => {
+  if (error instanceof Error) {
+    const message = error.message;
+    
+    if (message.includes('42501') || message.includes('insufficient privilege')) {
+      return 'Permission denied. Please check your access rights.';
+    }
+    if (message.includes('RLS')) {
+      return 'Access denied by security policy.';
+    }
+    if (message.includes('network') || message.includes('fetch') || message.includes('ECONNREFUSED')) {
+      return 'Network connection failed. Please check your internet connection.';
+    }
+    if (message.includes('timeout') || message.includes('408')) {
+      return 'Request timed out. Please try again.';
+    }
+    
+    return message;
+  }
+  return 'An unexpected error occurred. Please try again.';
+};
+
+const saveToLocalBackup = (tasks: ScheduledTask[]): void => {
+  try {
+    localStorage.setItem(SCHEDULED_TASKS_STORAGE_KEY, JSON.stringify(tasks));
+  } catch (err) {
+    console.error('Failed to save scheduled tasks backup:', err);
+  }
+};
+
+const loadFromLocalBackup = (): ScheduledTask[] => {
+  try {
+    const stored = localStorage.getItem(SCHEDULED_TASKS_STORAGE_KEY);
+    if (stored) {
+      return JSON.parse(stored);
+    }
+  } catch (err) {
+    console.error('Failed to load scheduled tasks backup:', err);
+  }
+  return [];
+};
+
+// ============================================================================
+// Hook Implementation
+// ============================================================================
+
+export function useSupabaseScheduledTasks(retryConfig: RetryConfig = DEFAULT_RETRY_CONFIG): UseSupabaseScheduledTasksReturn {
   const [tasks, setTasks] = useState<ScheduledTask[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isRetrying, setIsRetrying] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<'connected' | 'disconnected' | 'reconnecting'>('connected');
+
+  const subscriptionRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const retryAttemptRef = useRef(0);
+  const isMountedRef = useRef(true);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const supabaseAvailable = isSupabaseConfigured();
 
-  // Fetch all scheduled tasks
+  // ============================================================================
+  // Core Fetch with Retry Logic
+  // ============================================================================
+  const fetchWithRetry = useCallback(async <T,>(
+    fetchFn: () => Promise<T>,
+    attempt: number = 0
+  ): Promise<T> => {
+    try {
+      const result = await fetchFn();
+      retryAttemptRef.current = 0;
+      if (isMountedRef.current) {
+        setConnectionStatus('connected');
+      }
+      return result;
+    } catch (err) {
+      const errorMessage = parseError(err);
+      const isRetryableError = 
+        errorMessage.includes('network') ||
+        errorMessage.includes('timeout') ||
+        errorMessage.includes('ECONNREFUSED');
+
+      if (isRetryableError && attempt < retryConfig.maxRetries) {
+        const delay = getRetryDelay(attempt, retryConfig);
+        if (isMountedRef.current) {
+          setIsRetrying(true);
+          setConnectionStatus('reconnecting');
+        }
+        await sleep(delay);
+        if (isMountedRef.current) {
+          retryAttemptRef.current = attempt + 1;
+          return fetchWithRetry(fetchFn, attempt + 1);
+        }
+      }
+      throw err;
+    }
+  }, [retryConfig]);
+
+  // ============================================================================
+  // Fetch All Tasks
+  // ============================================================================
   const fetchTasks = useCallback(async () => {
     if (!supabaseAvailable) {
       setError('Supabase is not configured');
+      setConnectionStatus('disconnected');
+      const backup = loadFromLocalBackup();
+      setTasks(backup);
       return;
     }
 
     setLoading(true);
     setError(null);
+    setIsRetrying(false);
 
     try {
-      // Fetch tasks with officer names
-      const { data, error: supabaseError } = await supabase
-        .from('scheduled_tasks')
-        .select(`
-          *,
-          officers!inner(name)
-        `)
-        .order('created_at', { ascending: false });
+      const data = await fetchWithRetry(async () => {
+        const { data, error: supabaseError } = await supabase
+          .from('scheduled_tasks')
+          .select(`
+            *,
+            officers!inner(name)
+          `)
+          .order('created_at', { ascending: false });
 
-      if (supabaseError) {
-        throw supabaseError;
-      }
+        if (supabaseError) throw supabaseError;
+        return data || [];
+      });
 
-      // Map to app format with officer names
-      const mappedTasks: ScheduledTask[] = (data || []).map((task: ScheduledTaskDB & { officers: { name: string } }) => ({
+      const mappedTasks: ScheduledTask[] = (data as (ScheduledTaskDB & { officers: { name: string } })[]).map(task => ({
         id: task.id,
         officerId: task.officer_id,
         officerName: task.officers?.name || 'Unknown',
@@ -71,17 +211,28 @@ export function useSupabaseScheduledTasks(): UseSupabaseScheduledTasksReturn {
         status: task.status,
       }));
 
-      setTasks(mappedTasks);
+      if (isMountedRef.current) {
+        setTasks(mappedTasks);
+        saveToLocalBackup(mappedTasks);
+      }
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to fetch scheduled tasks';
-      setError(errorMessage);
-      console.error('Error fetching scheduled tasks:', err);
+      if (isMountedRef.current) {
+        setError(parseError(err));
+        setConnectionStatus('disconnected');
+        const backup = loadFromLocalBackup();
+        if (backup.length > 0) setTasks(backup);
+      }
     } finally {
-      setLoading(false);
+      if (isMountedRef.current) {
+        setLoading(false);
+        setIsRetrying(false);
+      }
     }
-  }, [supabaseAvailable]);
+  }, [supabaseAvailable, fetchWithRetry]);
 
-  // Add a new scheduled task
+  // ============================================================================
+  // Add Task with Optimistic Update
+  // ============================================================================
   const addTask = useCallback(async (
     officerId: string,
     officerName: string,
@@ -93,44 +244,55 @@ export function useSupabaseScheduledTasks(): UseSupabaseScheduledTasksReturn {
       return null;
     }
 
-    setLoading(true);
-    setError(null);
+    const tempId = `temp-${Date.now()}`;
+    const optimisticTask: ScheduledTask = {
+      id: tempId,
+      officerId,
+      officerName,
+      scheduledStatus,
+      scheduledTime: scheduledTime.toISOString(),
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      createdAt: new Date().toISOString(),
+      status: 'pending',
+    };
+
+    setTasks(prev => [...prev, optimisticTask]);
 
     try {
       // Cancel any existing pending task for this officer
-      const { error: cancelError } = await supabase
-        .from('scheduled_tasks')
-        .update({
-          status: 'cancelled',
-          cancelled_at: new Date().toISOString(),
-        })
-        .eq('officer_id', officerId)
-        .eq('status', 'pending');
+      await fetchWithRetry(async () => {
+        const { error: cancelError } = await supabase
+          .from('scheduled_tasks')
+          .update({
+            status: 'cancelled',
+            cancelled_at: new Date().toISOString(),
+          })
+          .eq('officer_id', officerId)
+          .eq('status', 'pending');
 
-      if (cancelError) {
-        console.error('Error cancelling existing task:', cancelError);
-      }
+        if (cancelError) console.error('Error cancelling existing task:', cancelError);
+      });
 
-      // Create new task
-      const newTaskData = {
-        officer_id: officerId,
-        scheduled_status: scheduledStatus,
-        scheduled_time: scheduledTime.toISOString(),
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        status: 'pending' as const,
-      };
+      const data = await fetchWithRetry(async () => {
+        const newTaskData = {
+          officer_id: officerId,
+          scheduled_status: scheduledStatus,
+          scheduled_time: scheduledTime.toISOString(),
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          status: 'pending' as const,
+        };
 
-      const { data, error: supabaseError } = await supabase
-        .from('scheduled_tasks')
-        .insert([newTaskData])
-        .select()
-        .single();
+        const { data, error: supabaseError } = await supabase
+          .from('scheduled_tasks')
+          .insert([newTaskData])
+          .select()
+          .single();
 
-      if (supabaseError) {
-        throw supabaseError;
-      }
+        if (supabaseError) throw supabaseError;
+        return data;
+      });
 
-      if (data) {
+      if (data && isMountedRef.current) {
         const newTask: ScheduledTask = {
           id: data.id,
           officerId: data.officer_id,
@@ -142,181 +304,295 @@ export function useSupabaseScheduledTasks(): UseSupabaseScheduledTasksReturn {
           status: data.status,
         };
 
-        setTasks(prev => [...prev, newTask]);
+        setTasks(prev => prev.map(t => t.id === tempId ? newTask : t));
+        saveToLocalBackup(tasks.map(t => t.id === tempId ? newTask : t));
         return newTask;
       }
 
       return null;
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to add scheduled task';
-      setError(errorMessage);
-      console.error('Error adding scheduled task:', err);
+      if (isMountedRef.current) {
+        setTasks(prev => prev.filter(t => t.id !== tempId));
+        setError(parseError(err));
+      }
       return null;
-    } finally {
-      setLoading(false);
     }
-  }, [supabaseAvailable]);
+  }, [supabaseAvailable, tasks, fetchWithRetry]);
 
-  // Cancel a scheduled task
+  // ============================================================================
+  // Cancel Task with Optimistic Update
+  // ============================================================================
   const cancelTask = useCallback(async (taskId: string): Promise<boolean> => {
     if (!supabaseAvailable) {
       setError('Supabase is not configured');
       return false;
     }
 
-    setLoading(true);
-    setError(null);
+    const originalTask = tasks.find(t => t.id === taskId);
+    if (!originalTask) return false;
+
+    setTasks(prev =>
+      prev.map(t =>
+        t.id === taskId && t.status === 'pending'
+          ? { ...t, status: 'cancelled', cancelledAt: new Date().toISOString() }
+          : t
+      )
+    );
 
     try {
-      const { error: supabaseError } = await supabase
-        .from('scheduled_tasks')
-        .update({
-          status: 'cancelled',
-          cancelled_at: new Date().toISOString(),
-        })
-        .eq('id', taskId)
-        .eq('status', 'pending');
+      await fetchWithRetry(async () => {
+        const { error: supabaseError } = await supabase
+          .from('scheduled_tasks')
+          .update({
+            status: 'cancelled',
+            cancelled_at: new Date().toISOString(),
+          })
+          .eq('id', taskId)
+          .eq('status', 'pending');
 
-      if (supabaseError) {
-        throw supabaseError;
+        if (supabaseError) throw supabaseError;
+      });
+
+      if (isMountedRef.current) {
+        saveToLocalBackup(tasks.map(t =>
+          t.id === taskId ? { ...t, status: 'cancelled' as const, cancelledAt: new Date().toISOString() } : t
+        ));
       }
-
-      setTasks(prev =>
-        prev.map(task =>
-          task.id === taskId && task.status === 'pending'
-            ? { ...task, status: 'cancelled', cancelledAt: new Date().toISOString() }
-            : task
-        )
-      );
-
       return true;
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to cancel task';
-      setError(errorMessage);
-      console.error('Error cancelling task:', err);
+      if (isMountedRef.current) {
+        setTasks(prev =>
+          prev.map(t => (t.id === taskId ? originalTask : t))
+        );
+        setError(parseError(err));
+      }
       return false;
-    } finally {
-      setLoading(false);
     }
-  }, [supabaseAvailable]);
+  }, [supabaseAvailable, tasks, fetchWithRetry]);
 
-  // Execute a task (mark as executed)
+  // ============================================================================
+  // Execute Task with Optimistic Update
+  // ============================================================================
   const executeTask = useCallback(async (taskId: string): Promise<boolean> => {
     if (!supabaseAvailable) {
       setError('Supabase is not configured');
       return false;
     }
 
-    setLoading(true);
-    setError(null);
+    const originalTask = tasks.find(t => t.id === taskId);
+    if (!originalTask) return false;
+
+    setTasks(prev =>
+      prev.map(t =>
+        t.id === taskId && t.status === 'pending'
+          ? { ...t, status: 'executed', executedAt: new Date().toISOString() }
+          : t
+      )
+    );
 
     try {
-      const { error: supabaseError } = await supabase
-        .from('scheduled_tasks')
-        .update({
-          status: 'executed',
-          executed_at: new Date().toISOString(),
-        })
-        .eq('id', taskId)
-        .eq('status', 'pending');
+      await fetchWithRetry(async () => {
+        const { error: supabaseError } = await supabase
+          .from('scheduled_tasks')
+          .update({
+            status: 'executed',
+            executed_at: new Date().toISOString(),
+          })
+          .eq('id', taskId)
+          .eq('status', 'pending');
 
-      if (supabaseError) {
-        throw supabaseError;
+        if (supabaseError) throw supabaseError;
+      });
+
+      if (isMountedRef.current) {
+        saveToLocalBackup(tasks.map(t =>
+          t.id === taskId ? { ...t, status: 'executed' as const, executedAt: new Date().toISOString() } : t
+        ));
       }
-
-      setTasks(prev =>
-        prev.map(task =>
-          task.id === taskId && task.status === 'pending'
-            ? { ...task, status: 'executed', executedAt: new Date().toISOString() }
-            : task
-        )
-      );
-
       return true;
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to execute task';
-      setError(errorMessage);
-      console.error('Error executing task:', err);
+      if (isMountedRef.current) {
+        setTasks(prev =>
+          prev.map(t => (t.id === taskId ? originalTask : t))
+        );
+        setError(parseError(err));
+      }
       return false;
-    } finally {
-      setLoading(false);
     }
-  }, [supabaseAvailable]);
+  }, [supabaseAvailable, tasks, fetchWithRetry]);
 
-  // Get pending task for a specific officer
+  // ============================================================================
+  // Get Pending Task for Officer
+  // ============================================================================
   const getTaskForOfficer = useCallback((officerId: string): ScheduledTask | undefined => {
     return tasks.find(task => task.officerId === officerId && task.status === 'pending');
   }, [tasks]);
 
-  // Filter tasks by status
-  const pendingTasks = tasks.filter(task => task.status === 'pending');
-  const executedTasks = tasks.filter(task => task.status === 'executed');
+  // ============================================================================
+  // Get Countdown for Scheduled Time
+  // ============================================================================
+  const getCountdown = useCallback((scheduledTime: string): CountdownInfo => {
+    const now = new Date();
+    const scheduled = new Date(scheduledTime);
+    const diff = scheduled.getTime() - now.getTime();
 
-  // Subscribe to real-time changes
+    if (diff <= 0) {
+      return {
+        days: 0,
+        hours: 0,
+        minutes: 0,
+        seconds: 0,
+        totalMilliseconds: 0,
+        isExpired: true
+      };
+    }
+
+    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+    const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+    const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+
+    return {
+      days,
+      hours,
+      minutes,
+      seconds,
+      totalMilliseconds: diff,
+      isExpired: false
+    };
+  }, []);
+
+  // ============================================================================
+  // Refresh and Retry Methods
+  // ============================================================================
+  const refreshTasks = useCallback(async () => {
+    await fetchTasks();
+  }, [fetchTasks]);
+
+  const retryConnection = useCallback(async () => {
+    retryAttemptRef.current = 0;
+    await fetchTasks();
+  }, [fetchTasks]);
+
+  // ============================================================================
+  // Real-time Subscription
+  // ============================================================================
   useEffect(() => {
     if (!supabaseAvailable) return;
 
-    const subscription = supabase
-      .channel('scheduled_tasks_changes')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'scheduled_tasks' },
-        (payload) => {
-          if (payload.eventType === 'INSERT') {
-            const newTask = payload.new as ScheduledTaskDB;
-            // Fetch officer name for the new task
-            supabase
-              .from('officers')
-              .select('name')
-              .eq('id', newTask.officer_id)
-              .single()
-              .then(({ data }) => {
-                const mappedTask: ScheduledTask = {
-                  id: newTask.id,
-                  officerId: newTask.officer_id,
-                  officerName: data?.name || 'Unknown',
-                  scheduledStatus: newTask.scheduled_status,
-                  scheduledTime: newTask.scheduled_time,
-                  timezone: newTask.timezone,
-                  createdAt: newTask.created_at,
-                  executedAt: newTask.executed_at || undefined,
-                  cancelledAt: newTask.cancelled_at || undefined,
-                  status: newTask.status,
-                };
-                setTasks(prev => [...prev, mappedTask]);
-              });
-          } else if (payload.eventType === 'UPDATE') {
-            const updatedTask = payload.new as ScheduledTaskDB;
-            setTasks(prev =>
-              prev.map(task =>
-                task.id === updatedTask.id
-                  ? {
-                      ...task,
-                      status: updatedTask.status,
-                      executedAt: updatedTask.executed_at || undefined,
-                      cancelledAt: updatedTask.cancelled_at || undefined,
-                    }
-                  : task
-              )
-            );
-          } else if (payload.eventType === 'DELETE') {
-            setTasks(prev => prev.filter(task => task.id !== payload.old.id));
+    const setupSubscription = () => {
+      if (subscriptionRef.current) {
+        subscriptionRef.current.unsubscribe();
+      }
+
+      subscriptionRef.current = supabase
+        .channel('scheduled_tasks_changes')
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'scheduled_tasks' },
+          (payload) => {
+            if (!isMountedRef.current) return;
+
+            if (payload.eventType === 'INSERT') {
+              const newTask = payload.new as ScheduledTaskDB;
+              supabase
+                .from('officers')
+                .select('name')
+                .eq('id', newTask.officer_id)
+                .single()
+                .then(({ data }) => {
+                  if (isMountedRef.current) {
+                    const mappedTask: ScheduledTask = {
+                      id: newTask.id,
+                      officerId: newTask.officer_id,
+                      officerName: data?.name || 'Unknown',
+                      scheduledStatus: newTask.scheduled_status,
+                      scheduledTime: newTask.scheduled_time,
+                      timezone: newTask.timezone,
+                      createdAt: newTask.created_at,
+                      executedAt: newTask.executed_at || undefined,
+                      cancelledAt: newTask.cancelled_at || undefined,
+                      status: newTask.status,
+                    };
+                    setTasks(prev => {
+                      if (prev.find(t => t.id === mappedTask.id)) return prev;
+                      return [...prev, mappedTask];
+                    });
+                  }
+                });
+            } else if (payload.eventType === 'UPDATE') {
+              const updatedTask = payload.new as ScheduledTaskDB;
+              setTasks(prev =>
+                prev.map(task =>
+                  task.id === updatedTask.id
+                    ? {
+                        ...task,
+                        status: updatedTask.status,
+                        executedAt: updatedTask.executed_at || undefined,
+                        cancelledAt: updatedTask.cancelled_at || undefined,
+                      }
+                    : task
+                )
+              );
+            } else if (payload.eventType === 'DELETE') {
+              setTasks(prev => prev.filter(task => task.id !== payload.old.id));
+            }
+
+            setTasks(current => {
+              saveToLocalBackup(current);
+              return current;
+            });
           }
-        }
-      )
-      .subscribe();
+        )
+        .subscribe((status) => {
+          if (status === 'SUBSCRIBED') {
+            setConnectionStatus('connected');
+          } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+            setConnectionStatus('disconnected');
+          }
+        });
+    };
+
+    setupSubscription();
 
     return () => {
-      subscription.unsubscribe();
+      if (subscriptionRef.current) {
+        subscriptionRef.current.unsubscribe();
+        subscriptionRef.current = null;
+      }
     };
   }, [supabaseAvailable]);
 
-  // Initial fetch
+  // ============================================================================
+  // Initial Fetch
+  // ============================================================================
   useEffect(() => {
     if (supabaseAvailable) {
       fetchTasks();
+    } else {
+      const backup = loadFromLocalBackup();
+      if (backup.length > 0) {
+        setTasks(backup);
+      }
     }
   }, [supabaseAvailable, fetchTasks]);
+
+  // ============================================================================
+  // Cleanup
+  // ============================================================================
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+      abortControllerRef.current?.abort();
+      if (subscriptionRef.current) {
+        subscriptionRef.current.unsubscribe();
+      }
+    };
+  }, []);
+
+  // Filter tasks by status
+  const pendingTasks = tasks.filter(task => task.status === 'pending');
+  const executedTasks = tasks.filter(task => task.status === 'executed');
 
   return {
     tasks,
@@ -324,10 +600,15 @@ export function useSupabaseScheduledTasks(): UseSupabaseScheduledTasksReturn {
     executedTasks,
     loading,
     error,
+    isRetrying,
+    connectionStatus,
     addTask,
     cancelTask,
+    executeTask,
     getTaskForOfficer,
     fetchTasks,
-    executeTask,
+    getCountdown,
+    refreshTasks,
+    retryConnection,
   };
 }
