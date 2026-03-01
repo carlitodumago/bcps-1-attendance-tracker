@@ -154,7 +154,6 @@ export function useSupabaseOfficers(retryConfig: RetryConfig = DEFAULT_RETRY_CON
   const subscriptionRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const retryAttemptRef = useRef(0);
   const isMountedRef = useRef(true);
-  const abortControllerRef = useRef<AbortController | null>(null);
 
   const supabaseAvailable = isSupabaseConfigured();
 
@@ -165,10 +164,6 @@ export function useSupabaseOfficers(retryConfig: RetryConfig = DEFAULT_RETRY_CON
     if (!supabaseAvailable) {
       throw new Error('Supabase is not configured');
     }
-
-    // Create new abort controller for this request
-    abortControllerRef.current?.abort();
-    abortControllerRef.current = new AbortController();
 
     try {
       let query = supabase
@@ -633,12 +628,8 @@ export function useSupabaseOfficers(retryConfig: RetryConfig = DEFAULT_RETRY_CON
   // Cleanup on Unmount
   // ============================================================================
   useEffect(() => {
-    const controller = abortControllerRef.current;
     return () => {
       isMountedRef.current = false;
-      if (controller) {
-        controller.abort();
-      }
       if (subscriptionRef.current) {
         subscriptionRef.current.unsubscribe();
       }

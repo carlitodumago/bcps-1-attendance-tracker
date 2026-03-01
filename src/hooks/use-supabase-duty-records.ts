@@ -142,7 +142,6 @@ export function useSupabaseDutyRecords(retryConfig: RetryConfig = DEFAULT_RETRY_
   const subscriptionRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const retryAttemptRef = useRef(0);
   const isMountedRef = useRef(true);
-  const abortControllerRef = useRef<AbortController | null>(null);
 
   const supabaseAvailable = isSupabaseConfigured();
 
@@ -787,12 +786,8 @@ export function useSupabaseDutyRecords(retryConfig: RetryConfig = DEFAULT_RETRY_
   // Cleanup
   // ============================================================================
   useEffect(() => {
-    const controller = abortControllerRef.current;
     return () => {
       isMountedRef.current = false;
-      if (controller) {
-        controller.abort();
-      }
       if (subscriptionRef.current) {
         subscriptionRef.current.unsubscribe();
       }

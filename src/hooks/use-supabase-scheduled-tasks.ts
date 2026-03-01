@@ -121,7 +121,6 @@ export function useSupabaseScheduledTasks(retryConfig: RetryConfig = DEFAULT_RET
   const subscriptionRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const retryAttemptRef = useRef(0);
   const isMountedRef = useRef(true);
-  const abortControllerRef = useRef<AbortController | null>(null);
 
   const supabaseAvailable = isSupabaseConfigured();
 
@@ -575,12 +574,8 @@ export function useSupabaseScheduledTasks(retryConfig: RetryConfig = DEFAULT_RET
   // Cleanup
   // ============================================================================
   useEffect(() => {
-    const controller = abortControllerRef.current;
     return () => {
       isMountedRef.current = false;
-      if (controller) {
-        controller.abort();
-      }
       if (subscriptionRef.current) {
         subscriptionRef.current.unsubscribe();
       }
