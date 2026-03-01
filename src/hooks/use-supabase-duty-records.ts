@@ -47,7 +47,7 @@ interface UseSupabaseDutyRecordsReturn {
   getDutyStats: (startDate: Date, endDate: Date) => Promise<{ duty_date: string; total_officers: number; officers_on_duty: number; officers_off_duty: number }[]>;
   refreshData: () => Promise<void>;
   retryConnection: () => Promise<void>;
-  onDutyRecordsChange?: (callback: () => void) => () => void;
+  onDutyRecordsChange?: (callback: (officerId?: string, status?: 'on-duty' | 'off-duty', dutyRecord?: DutyRecord) => void) => () => void;
 }
 
 // ============================================================================
@@ -143,22 +143,22 @@ export function useSupabaseDutyRecords(retryConfig: RetryConfig = DEFAULT_RETRY_
   const subscriptionRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const retryAttemptRef = useRef(0);
   const isMountedRef = useRef(true);
-  const dutyRecordsChangeCallbacks = useRef<Set<() => void>>(new Set());
+  const dutyRecordsChangeCallbacks = useRef<Set<(officerId?: string, status?: 'on-duty' | 'off-duty', dutyRecord?: DutyRecord) => void>>(new Set());
 
   const supabaseAvailable = isSupabaseConfigured();
 
   // Callback registration for duty records changes
-  const onDutyRecordsChange = useCallback((callback: () => void) => {
+  const onDutyRecordsChange = useCallback((callback: (officerId?: string, status?: 'on-duty' | 'off-duty', dutyRecord?: DutyRecord) => void) => {
     dutyRecordsChangeCallbacks.current.add(callback);
     return () => {
       dutyRecordsChangeCallbacks.current.delete(callback);
     };
   }, []);
 
-  const notifyDutyRecordsChange = useCallback(() => {
+  const notifyDutyRecordsChange = useCallback((officerId?: string, status?: 'on-duty' | 'off-duty', dutyRecord?: DutyRecord) => {
     dutyRecordsChangeCallbacks.current.forEach(callback => {
       try {
-        callback();
+        callback(officerId, status, dutyRecord);
       } catch (err) {
         console.error('Error in duty records change callback:', err);
       }
@@ -752,13 +752,20 @@ export function useSupabaseDutyRecords(retryConfig: RetryConfig = DEFAULT_RETRY_
                 if (prev.find(r => r.id === newRecord.id)) return prev;
                 return [newRecord, ...prev];
               });
+              // Notify with officer info for immediate sync
+              notifyDutyRecordsChange(newRecord.officer_id, 'on-duty', newRecord);
             } else if (payload.eventType === 'UPDATE') {
               const updatedRecord = payload.new as DutyRecord;
               setDutyRecords(prev =>
                 prev.map(r => (r.id === updatedRecord.id ? updatedRecord : r))
               );
+              // Determine status based on time_out
+              const status = updatedRecord.time_out ? 'off-duty' : 'on-duty';
+              notifyDutyRecordsChange(updatedRecord.officer_id, status, updatedRecord);
             } else if (payload.eventType === 'DELETE') {
+              const deletedRecord = payload.old as DutyRecord;
               setDutyRecords(prev => prev.filter(r => r.id !== payload.old.id));
+              notifyDutyRecordsChange(deletedRecord.officer_id, 'off-duty');
             }
 
             setDutyRecords(current => {
@@ -766,7 +773,6 @@ export function useSupabaseDutyRecords(retryConfig: RetryConfig = DEFAULT_RETRY_
               return current;
             });
             fetchTodaySummary();
-            notifyDutyRecordsChange();
           }
         )
         .subscribe((status) => {

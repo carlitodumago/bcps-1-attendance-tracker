@@ -165,6 +165,38 @@ export function useUnifiedData(onTaskExecute?: (task: ScheduledTask) => void): U
     hasInitiallySynced.current = true;
   }, [supabaseAvailable, dbOfficers, fetchDutyRecordsForOfficer]);
 
+  // Realtime duty status update - no refetch needed
+  const updateOfficerDutyStatus = useCallback((officerId: string, status: 'on-duty' | 'off-duty', dutyRecord?: { time_in: string; time_out: string | null; duty_date: string }) => {
+    setSyncedOfficers(prev =>
+      prev.map(officer => {
+        if (officer.id !== officerId) return officer;
+        
+        const updatedHistory = [...officer.dutyHistory];
+        
+        if (status === 'on-duty' && dutyRecord) {
+          // Add new duty record
+          updatedHistory.push({
+            timeIn: dutyRecord.time_in,
+            timeOut: dutyRecord.time_out,
+            date: dutyRecord.duty_date,
+          });
+        } else if (status === 'off-duty' && dutyRecord) {
+          // Update last record with time_out
+          const lastRecord = updatedHistory[updatedHistory.length - 1];
+          if (lastRecord && lastRecord.date === dutyRecord.duty_date) {
+            lastRecord.timeOut = dutyRecord.time_out;
+          }
+        }
+        
+        return {
+          ...officer,
+          currentStatus: status,
+          dutyHistory: updatedHistory,
+        };
+      })
+    );
+  }, []);
+
   // Initial sync and duty records change subscription
   useEffect(() => {
     if (!supabaseAvailable) return;
@@ -177,18 +209,20 @@ export function useUnifiedData(onTaskExecute?: (task: ScheduledTask) => void): U
       return () => clearTimeout(timeoutId);
     }
     
-    // Subscribe to duty records changes for bidirectional sync
+    // Subscribe to duty records changes for immediate bidirectional sync
     let unsubscribe: (() => void) | undefined;
     if (onDutyRecordsChange) {
-      unsubscribe = onDutyRecordsChange(() => {
-        syncOfficersWithDutyRecords();
+      unsubscribe = onDutyRecordsChange((officerId, status, dutyRecord) => {
+        if (officerId && status) {
+          updateOfficerDutyStatus(officerId, status, dutyRecord);
+        }
       });
     }
     
     return () => {
       if (unsubscribe) unsubscribe();
     };
-  }, [supabaseAvailable, dbOfficers.length, onDutyRecordsChange, syncOfficersWithDutyRecords]);
+  }, [supabaseAvailable, dbOfficers.length, onDutyRecordsChange, syncOfficersWithDutyRecords, updateOfficerDutyStatus]);
 
   // Use appropriate data source
   const officers = supabaseAvailable ? syncedOfficers : localOfficers;
