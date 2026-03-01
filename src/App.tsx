@@ -272,7 +272,7 @@ function App() {
             </div>
             <div className="text-center">
               <h1 className="text-2xl md:text-3xl font-bold tracking-wide">
-                BCSP-1
+                BCPS-1
               </h1>
               <p className="text-blue-200 text-sm md:text-base">Attendance Tracker</p>
             </div>
@@ -566,7 +566,7 @@ function App() {
           <div className="flex items-center justify-center gap-6 flex-wrap">
             <span className="flex items-center gap-1">
               <MapPin className="w-4 h-4" />
-              BCSP-1
+                BCPS-1
             </span>
             <span className="flex items-center gap-1">
               <Phone className="w-4 h-4" />
