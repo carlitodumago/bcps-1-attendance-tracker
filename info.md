@@ -1,31 +1,116 @@
-Using Node.js 20, Tailwind CSS v3.4.19, and Vite v7.2.4
+# BCPS-1 Attendance Tracker
 
-Tailwind CSS has been set up with the shadcn theme
+A police attendance tracking application for managing officer duty status and scheduling automatic status changes.
 
-Setup complete: /mnt/okcomputer/output/app
+## Features
 
-Components (40+):
-  accordion, alert-dialog, alert, aspect-ratio, avatar, badge, breadcrumb,
-  button-group, button, calendar, card, carousel, chart, checkbox, collapsible,
-  command, context-menu, dialog, drawer, dropdown-menu, empty, field, form,
-  hover-card, input-group, input-otp, input, item, kbd, label, menubar,
-  navigation-menu, pagination, popover, progress, radio-group, resizable,
-  scroll-area, select, separator, sheet, sidebar, skeleton, slider, sonner,
-  spinner, switch, table, tabs, textarea, toggle-group, toggle, tooltip
+### Core Features
+- Officer registration with name, rank, badge number, and unit
+- Real-time duty status tracking (On Duty / Off Duty)
+- Duty history with time-in and time-out records
+- Calendar view showing officers on duty for each day
+- Search functionality for officers
+- Edit and delete officer records
 
-Usage:
-  import { Button } from '@/components/ui/button'
-  import { Card, CardHeader, CardTitle } from '@/components/ui/card'
+### Scheduled Status Changes (NEW)
+The application now supports **persistent scheduling** of automatic status changes:
 
-Structure:
-  src/sections/        Page sections
-  src/hooks/           Custom hooks
-  src/types/           Type definitions
-  src/App.css          Styles specific to the Webapp
-  src/App.tsx          Root React component
-  src/index.css        Global styles
-  src/main.tsx         Entry point for rendering the Webapp
-  index.html           Entry point for the Webapp
-  tailwind.config.js   Configures Tailwind's theme, plugins, etc.
-  vite.config.ts       Main build and dev server settings for Vite
-  postcss.config.js    Config file for CSS post-processing tools
+- **Schedule Off-Duty Button**: Officers on duty can have their off-duty time scheduled
+- **Default Time**: Automatically defaults to 8:00 AM tomorrow
+- **Time Selection**: Users can customize the scheduled time via dropdown
+- **Real-time Countdown**: Visual countdown showing time until scheduled status change
+- **Persistent Storage**: Scheduled tasks are saved to localStorage
+- **Background Execution**: Tasks execute automatically even if:
+  - The application is closed
+  - The browser tab is inactive
+  - The device enters sleep mode
+- **Service Worker**: Handles background task execution with notification support
+
+### Time Options
+Available scheduling times:
+- 6:00 AM - Early morning shift end
+- 7:00 AM - Morning shift end
+- 8:00 AM - Standard morning end (default)
+- 9:00 AM - Late morning
+- 10:00 AM - Morning
+- 2:00 PM - Afternoon shift end
+- 3:00 PM - Afternoon
+- 4:00 PM - Standard afternoon end
+- 5:00 PM - End of business day
+- 6:00 PM - Evening shift end
+- 8:00 PM - Night shift
+- 10:00 PM - Late night
+- 11:59 PM - End of day
+
+### Timezone Support
+All scheduled times are stored with timezone awareness using the user's local timezone (IANA format like 'Asia/Manila').
+
+## Technical Stack
+
+- React 19 + TypeScript
+- Vite for build tooling
+- Tailwind CSS for styling
+- shadcn/ui components
+- date-fns for date manipulation
+- Service Workers for background processing
+- LocalStorage for client-side persistence
+
+## Architecture
+
+### Components
+- `ScheduleOffDutyButton`: Button with modal for scheduling off-duty time
+- `ScheduledTasksPanel`: Panel displaying all scheduled tasks with countdowns
+
+### Hooks
+- `useStatusScheduler`: Core hook for managing scheduled tasks
+- `useServiceWorker`: Hook for service worker registration and communication
+
+### Service Worker
+- `public/scheduler-worker.js`: Background service worker for task execution
+- Uses IndexedDB for reliable storage
+- Periodic sync checks every 30 seconds
+- Push notification support for task completion
+
+### Types
+- `ScheduledTask`: Interface for scheduled status change tasks
+- `CountdownInfo`: Interface for countdown display data
+
+## Data Storage
+
+### Officers
+Stored in localStorage key: `bcsp-1-attendance-tracker`
+
+### Scheduled Tasks
+Stored in localStorage key: `bcsp-1-scheduled-tasks`
+
+Task structure:
+```typescript
+{
+  id: string;
+  officerId: string;
+  officerName: string;
+  scheduledStatus: 'off-duty' | 'on-duty';
+  scheduledTime: string; // ISO 8601
+  timezone: string; // IANA timezone
+  createdAt: string;
+  executedAt?: string;
+  cancelledAt?: string;
+  status: 'pending' | 'executed' | 'cancelled' | 'failed';
+}
+```
+
+## Usage
+
+1. **Register an officer**: Fill in the form and click "Register"
+2. **Set on duty**: Click the "On" button when an officer starts duty
+3. **Schedule off duty**: Click "Schedule Off" button and select desired time
+4. **View scheduled tasks**: See all pending and completed tasks in the Scheduled Tasks panel
+5. **Cancel schedule**: Click the trash icon on a pending task to cancel
+
+## Future Enhancements
+
+- Supabase integration for cloud persistence
+- Push notification permissions
+- Mobile app with native notifications
+- Recurring schedule support
+- Admin dashboard for multiple stations

@@ -1,23 +1,35 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { 
-  Dialog, 
-  DialogContent, 
-  DialogDescription, 
-  DialogFooter, 
-  DialogHeader, 
-  DialogTitle 
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
 } from '@/components/ui/dialog'
-import { 
-  Shield, 
-  UserCheck, 
-  UserX, 
-  UserPlus, 
-  Trash2, 
-  Edit2, 
+import {
+  Shield,
+  UserCheck,
+  UserX,
+  UserPlus,
+  Trash2,
+  Edit2,
   Search,
   Calendar as CalendarIcon,
   MapPin,
@@ -26,7 +38,8 @@ import {
   ChevronLeft,
   ChevronRight,
   CalendarDays,
-  Clock
+  Clock,
+  Timer
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Toaster } from '@/components/ui/sonner'
@@ -42,6 +55,11 @@ import {
   addMonths,
   subMonths
 } from 'date-fns'
+
+// Scheduler imports
+import { useStatusScheduler } from './hooks/use-status-scheduler'
+import { ScheduleOffDutyButton } from './components/ScheduleOffDutyButton'
+import type { ScheduledTask } from './types/scheduler'
 
 interface DutyRecord {
   timeIn: string
@@ -60,6 +78,20 @@ interface Officer {
 }
 
 function App() {
+  // Utility functions (defined first)
+  const getCurrentTime = () => {
+    return new Date().toLocaleTimeString('en-PH', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true
+    })
+  }
+
+  const getCurrentDate = () => {
+    return new Date().toISOString().split('T')[0]
+  }
+
   // Load officers from localStorage on initial state setup
   const [officers, setOfficers] = useState<Officer[]>(() => {
     const savedOfficers = localStorage.getItem('bcsp-1-attendance-tracker')
@@ -87,6 +119,43 @@ function App() {
   const [selectedDate, setSelectedDate] = useState<Date | null>(null)
   const [dayDetailsOpen, setDayDetailsOpen] = useState(false)
 
+  // Auto-schedule off-duty time (default: 8:00 AM tomorrow)
+
+  // Initialize status scheduler with task execution handler
+  const handleTaskExecute = useCallback((task: ScheduledTask) => {
+    // Execute the scheduled off-duty action
+    if (task.scheduledStatus === 'off-duty') {
+      const now = getCurrentTime()
+      
+      setOfficers(prevOfficers => 
+        prevOfficers.map(officer => {
+          if (officer.id === task.officerId) {
+            const updatedHistory = [...officer.dutyHistory]
+            const lastRecord = updatedHistory[updatedHistory.length - 1]
+            if (lastRecord && !lastRecord.timeOut) {
+              lastRecord.timeOut = now
+            }
+            return {
+              ...officer,
+              dutyHistory: updatedHistory,
+              currentStatus: 'off-duty'
+            }
+          }
+          return officer
+        })
+      )
+      
+      toast.success(`${task.officerName} is now OFF DUTY (auto-scheduled)`)
+    }
+  }, [])
+
+  const {
+    addTask,
+    cancelTask,
+    getTaskForOfficer,
+    getCountdown,
+  } = useStatusScheduler(handleTaskExecute)
+
   // Save officers to localStorage whenever they change
   useEffect(() => {
     localStorage.setItem('bcsp-1-attendance-tracker', JSON.stringify(officers))
@@ -94,19 +163,6 @@ function App() {
 
   const generateId = () => {
     return Date.now().toString(36) + Math.random().toString(36).substr(2)
-  }
-
-  const getCurrentTime = () => {
-    return new Date().toLocaleTimeString('en-PH', {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: true
-    })
-  }
-
-  const getCurrentDate = () => {
-    return new Date().toISOString().split('T')[0]
   }
 
   const handleAddOfficer = () => {
@@ -141,6 +197,10 @@ function App() {
     const today = getCurrentDate()
     const now = getCurrentTime()
     
+    // Find the officer to get their name for scheduling
+    const officer = officers.find(o => o.id === id)
+    if (!officer) return
+    
     setOfficers(officers.map(officer => {
       if (officer.id === id) {
         const newRecord: DutyRecord = {
@@ -156,7 +216,17 @@ function App() {
       }
       return officer
     }))
-    toast.success('Officer is now ON DUTY')
+    
+    // Automatically schedule off-duty for tomorrow at 8:00 AM
+    const tomorrow = new Date()
+    tomorrow.setDate(tomorrow.getDate() + 1)
+    tomorrow.setHours(8, 0, 0, 0)
+    
+    addTask(officer.id, officer.name, 'off-duty', tomorrow)
+    
+    toast.success(`${officer.name} is now ON DUTY`, {
+      description: 'Auto-scheduled off-duty for tomorrow at 8:00 AM'
+    })
   }
 
   const handleOffDuty = (id: string) => {
@@ -252,7 +322,47 @@ function App() {
   const onDutyOfficers = officers.filter(o => o.currentStatus === 'on-duty')
   const offDutyOfficers = officers.filter(o => o.currentStatus === 'off-duty')
 
-  const filteredOfficers = officers.filter(officer => 
+  // Schedule Off-Duty state for calendar
+  const [scheduleTime, setScheduleTime] = useState<string>('08:00')
+  const [isSchedulePopoverOpen, setIsSchedulePopoverOpen] = useState(false)
+
+  const getTomorrowAtTime = useCallback((timeValue: string): Date => {
+    const tomorrow = new Date()
+    tomorrow.setDate(tomorrow.getDate() + 1)
+    const [hours, minutes] = timeValue.split(':').map(Number)
+    tomorrow.setHours(hours, minutes, 0, 0)
+    return tomorrow
+  }, [])
+
+  const handleScheduleAllOffDuty = useCallback(() => {
+    const scheduledTime = getTomorrowAtTime(scheduleTime)
+    
+    if (scheduledTime <= new Date()) {
+      toast.error('Selected time has already passed')
+      return
+    }
+
+    if (onDutyOfficers.length === 0) {
+      toast.error('No officers are currently on duty')
+      return
+    }
+
+    // Schedule off-duty for all on-duty officers
+    onDutyOfficers.forEach(officer => {
+      addTask(officer.id, officer.name, 'off-duty', scheduledTime)
+    })
+
+    const timeLabel = new Date(`2000-01-01T${scheduleTime}`).toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true
+    })
+
+    toast.success(`Scheduled ${onDutyOfficers.length} officer${onDutyOfficers.length > 1 ? 's' : ''} to go off-duty tomorrow at ${timeLabel}`)
+    setIsSchedulePopoverOpen(false)
+  }, [onDutyOfficers, scheduleTime, addTask, getTomorrowAtTime])
+
+  const filteredOfficers = officers.filter(officer =>
     officer.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     officer.rank.toLowerCase().includes(searchTerm.toLowerCase()) ||
     officer.unit.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -319,13 +429,83 @@ function App() {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* Left Column - Calendar */}
-          <div>
+          {/* Left Column - Calendar & Scheduled Tasks */}
+          <div className="space-y-6">
+            {/* Duty Calendar with Scheduled Off-Duty */}
             <Card className="border-2 border-blue-100 shadow-xl bg-white/80 backdrop-blur">
               <CardHeader className="bg-gradient-to-r from-blue-50 to-white border-b border-blue-100">
-                <CardTitle className="flex items-center gap-2 text-blue-900">
-                  <CalendarDays className="w-5 h-5" />
-                  Duty Calendar
+                <CardTitle className="flex items-center justify-between text-blue-900">
+                  <div className="flex items-center gap-2">
+                    <CalendarDays className="w-5 h-5" />
+                    Duty Calendar
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {onDutyOfficers.length > 0 && (
+                      <Popover open={isSchedulePopoverOpen} onOpenChange={setIsSchedulePopoverOpen}>
+                        <PopoverTrigger asChild>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="border-orange-400 text-orange-600 hover:bg-orange-50 h-8 px-2 text-xs"
+                            title="Schedule off-duty for all on-duty officers"
+                          >
+                            <Timer className="w-3 h-3 mr-1" />
+                            Schedule Off-Duty
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-72" align="end">
+                          <div className="space-y-4">
+                            <div>
+                              <h4 className="font-semibold text-sm">Schedule Off-Duty</h4>
+                              <p className="text-xs text-muted-foreground mt-0.5">
+                                Schedule all {onDutyOfficers.length} on-duty officer{onDutyOfficers.length > 1 ? 's' : ''} for tomorrow
+                              </p>
+                            </div>
+
+                            <div className="space-y-2">
+                              <label className="text-xs font-medium text-gray-700">
+                                Select Time (Default: 8:00 AM)
+                              </label>
+                              <Select
+                                value={scheduleTime}
+                                onValueChange={setScheduleTime}
+                              >
+                                <SelectTrigger className="w-full">
+                                  <SelectValue placeholder="Select time" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="06:00">6:00 AM</SelectItem>
+                                  <SelectItem value="07:00">7:00 AM</SelectItem>
+                                  <SelectItem value="08:00">8:00 AM (Default)</SelectItem>
+                                  <SelectItem value="09:00">9:00 AM</SelectItem>
+                                  <SelectItem value="10:00">10:00 AM</SelectItem>
+                                  <SelectItem value="14:00">2:00 PM</SelectItem>
+                                  <SelectItem value="15:00">3:00 PM</SelectItem>
+                                  <SelectItem value="16:00">4:00 PM</SelectItem>
+                                  <SelectItem value="17:00">5:00 PM</SelectItem>
+                                  <SelectItem value="18:00">6:00 PM</SelectItem>
+                                  <SelectItem value="20:00">8:00 PM</SelectItem>
+                                  <SelectItem value="22:00">10:00 PM</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+
+                            <Button
+                              onClick={handleScheduleAllOffDuty}
+                              className="w-full bg-orange-500 hover:bg-orange-600"
+                            >
+                              <Timer className="w-4 h-4 mr-2" />
+                              Schedule All Off-Duty
+                            </Button>
+
+                            <p className="text-xs text-muted-foreground text-center">
+                              All {onDutyOfficers.length} on-duty officer{onDutyOfficers.length > 1 ? 's' : ''} will automatically go off-duty tomorrow at the selected time.
+                            </p>
+                          </div>
+                        </PopoverContent>
+                      </Popover>
+                    )}
+                  </div>
                 </CardTitle>
               </CardHeader>
               <CardContent className="p-6">
@@ -403,6 +583,7 @@ function App() {
                 </div>
               </CardContent>
             </Card>
+
           </div>
 
           {/* Right Column - Officer Management */}
@@ -464,15 +645,27 @@ function App() {
                                 On
                               </Button>
                             ) : (
-                              <Button
-                                size="sm"
-                                onClick={() => handleOffDuty(officer.id)}
-                                variant="outline"
-                                className="border-orange-400 text-orange-600 hover:bg-orange-50 h-7 px-2 text-xs"
-                              >
-                                <UserX className="w-3 h-3 mr-1" />
-                                Off
-                              </Button>
+                              <>
+                                <Button
+                                  size="sm"
+                                  onClick={() => handleOffDuty(officer.id)}
+                                  variant="outline"
+                                  className="border-orange-400 text-orange-600 hover:bg-orange-50 h-7 px-2 text-xs"
+                                >
+                                  <UserX className="w-3 h-3 mr-1" />
+                                  Off
+                                </Button>
+                                <ScheduleOffDutyButton
+                                  officerId={officer.id}
+                                  officerName={officer.name}
+                                  currentStatus={officer.currentStatus}
+                                  scheduledTask={getTaskForOfficer(officer.id)}
+                                  onSchedule={addTask}
+                                  onCancelSchedule={cancelTask}
+                                  getCountdown={getCountdown}
+                                  compact
+                                />
+                              </>
                             )}
                             <Button
                               size="sm"
