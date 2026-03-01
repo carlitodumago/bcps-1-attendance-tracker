@@ -60,7 +60,19 @@ interface Officer {
 }
 
 function App() {
-  const [officers, setOfficers] = useState<Officer[]>([])
+  // Load officers from localStorage on initial state setup
+  const [officers, setOfficers] = useState<Officer[]>(() => {
+    const savedOfficers = localStorage.getItem('bcsp-1-attendance-tracker')
+    if (savedOfficers) {
+      try {
+        return JSON.parse(savedOfficers)
+      } catch {
+        console.error('Failed to parse saved officers')
+        return []
+      }
+    }
+    return []
+  })
   const [name, setName] = useState('')
   const [rank, setRank] = useState('')
   const [badgeNumber, setBadgeNumber] = useState('')
@@ -74,18 +86,6 @@ function App() {
   const [currentMonth, setCurrentMonth] = useState(new Date())
   const [selectedDate, setSelectedDate] = useState<Date | null>(null)
   const [dayDetailsOpen, setDayDetailsOpen] = useState(false)
-
-  // Load officers from localStorage on mount
-  useEffect(() => {
-    const savedOfficers = localStorage.getItem('bcsp-1-attendance-tracker')
-    if (savedOfficers) {
-      try {
-        setOfficers(JSON.parse(savedOfficers))
-      } catch (e) {
-        console.error('Failed to parse saved officers')
-      }
-    }
-  }, [])
 
   // Save officers to localStorage whenever they change
   useEffect(() => {
