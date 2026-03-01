@@ -13,12 +13,6 @@ import type { ScheduledTask, ScheduledStatus, CountdownInfo } from '../types/sch
 // Types
 // ============================================================================
 
-interface QueryOptions {
-  orderBy?: { column: string; ascending?: boolean };
-  filters?: { column: string; value: unknown; operator?: 'eq' | 'neq' }[];
-  limit?: number;
-}
-
 interface RetryConfig {
   maxRetries: number;
   baseDelay: number;
