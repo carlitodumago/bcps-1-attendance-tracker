@@ -635,7 +635,10 @@ export function useSupabaseOfficers(retryConfig: RetryConfig = DEFAULT_RETRY_CON
   useEffect(() => {
     return () => {
       isMountedRef.current = false;
-      abortControllerRef.current?.abort();
+      const controller = abortControllerRef.current;
+      if (controller) {
+        controller.abort();
+      }
       if (subscriptionRef.current) {
         subscriptionRef.current.unsubscribe();
       }

@@ -577,7 +577,10 @@ export function useSupabaseScheduledTasks(retryConfig: RetryConfig = DEFAULT_RET
   useEffect(() => {
     return () => {
       isMountedRef.current = false;
-      abortControllerRef.current?.abort();
+      const controller = abortControllerRef.current;
+      if (controller) {
+        controller.abort();
+      }
       if (subscriptionRef.current) {
         subscriptionRef.current.unsubscribe();
       }

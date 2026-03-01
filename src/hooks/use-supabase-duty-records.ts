@@ -293,7 +293,7 @@ export function useSupabaseDutyRecords(retryConfig: RetryConfig = DEFAULT_RETRY_
   // ============================================================================
   // Fetch Duty Records for Date
   // ============================================================================
-  const fetchDutyRecordsForDate = useCallback(async (date: Date, _options?: QueryOptions): Promise<DutyRecord[]> => {
+  const fetchDutyRecordsForDate = useCallback(async (date: Date): Promise<DutyRecord[]> => {
     const dateStr = date.toISOString().split('T')[0];
     
     if (!supabaseAvailable) {
@@ -789,7 +789,10 @@ export function useSupabaseDutyRecords(retryConfig: RetryConfig = DEFAULT_RETRY_
   useEffect(() => {
     return () => {
       isMountedRef.current = false;
-      abortControllerRef.current?.abort();
+      const controller = abortControllerRef.current;
+      if (controller) {
+        controller.abort();
+      }
       if (subscriptionRef.current) {
         subscriptionRef.current.unsubscribe();
       }
