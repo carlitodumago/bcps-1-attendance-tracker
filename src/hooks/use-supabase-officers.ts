@@ -628,6 +628,7 @@ export function useSupabaseOfficers(retryConfig: RetryConfig = DEFAULT_RETRY_CON
   // Cleanup on Unmount
   // ============================================================================
   useEffect(() => {
+    isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
       if (subscriptionRef.current) {

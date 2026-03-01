@@ -574,6 +574,7 @@ export function useSupabaseScheduledTasks(retryConfig: RetryConfig = DEFAULT_RET
   // Cleanup
   // ============================================================================
   useEffect(() => {
+    isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
       if (subscriptionRef.current) {

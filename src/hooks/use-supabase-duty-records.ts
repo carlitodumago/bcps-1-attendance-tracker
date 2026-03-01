@@ -786,6 +786,7 @@ export function useSupabaseDutyRecords(retryConfig: RetryConfig = DEFAULT_RETRY_
   // Cleanup
   // ============================================================================
   useEffect(() => {
+    isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
       if (subscriptionRef.current) {
