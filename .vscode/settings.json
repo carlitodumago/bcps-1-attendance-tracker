@@ -1,0 +1,12 @@
+{
+  "json.schemas": [
+    {
+      "fileMatch": ["components.json"],
+      "url": "https://ui.shadcn.com/schema.json"
+    }
+  ],
+  "security.workspace.trust.untrustedFiles": "open",
+  "json.validate.enable": true,
+  "workbench.settings.enableNaturalLanguageSearch": true,
+  "http.proxyStrictSSL": false
+}
