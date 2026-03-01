@@ -39,78 +39,63 @@ import {
   ChevronRight,
   CalendarDays,
   Clock,
-  Timer
+  Timer,
+  Database,
+  Wifi,
+  WifiOff
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Toaster } from '@/components/ui/sonner'
-import { 
-  format, 
-  startOfMonth, 
-  endOfMonth, 
-  startOfWeek, 
-  endOfWeek, 
-  addDays, 
-  isSameMonth, 
+import {
+  format,
+  startOfMonth,
+  endOfMonth,
+  startOfWeek,
+  endOfWeek,
+  addDays,
+  isSameMonth,
   isSameDay,
   addMonths,
   subMonths
 } from 'date-fns'
 
 // Scheduler imports
-import { useStatusScheduler } from './hooks/use-status-scheduler'
+import { useUnifiedData, type AppOfficer } from './hooks/use-unified-data'
 import { ScheduleOffDutyButton } from './components/ScheduleOffDutyButton'
-import type { ScheduledTask } from './types/scheduler'
 
-interface DutyRecord {
-  timeIn: string
-  timeOut: string | null
-  date: string
-}
-
-interface Officer {
+// Type for editing officer
+interface EditingOfficer {
   id: string
   name: string
   rank: string
   badgeNumber?: string
   unit: string
-  dutyHistory: DutyRecord[]
-  currentStatus: 'on-duty' | 'off-duty'
 }
 
 function App() {
-  // Utility functions (defined first)
-  const getCurrentTime = () => {
-    return new Date().toLocaleTimeString('en-PH', {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: true
-    })
-  }
+  // Use unified data hook (handles both Supabase and localStorage)
+  const {
+    officers,
+    loading,
+    isSupabaseConnected,
+    addOfficer,
+    updateOfficer,
+    deleteOfficer,
+    checkInOfficer,
+    checkOutOfficer,
+    scheduleTask,
+    cancelTask,
+    getTaskForOfficer,
+    refreshData,
+  } = useUnifiedData()
 
-  const getCurrentDate = () => {
-    return new Date().toISOString().split('T')[0]
-  }
-
-  // Load officers from localStorage on initial state setup
-  const [officers, setOfficers] = useState<Officer[]>(() => {
-    const savedOfficers = localStorage.getItem('bcsp-1-attendance-tracker')
-    if (savedOfficers) {
-      try {
-        return JSON.parse(savedOfficers)
-      } catch {
-        console.error('Failed to parse saved officers')
-        return []
-      }
-    }
-    return []
-  })
+  // Form state
   const [name, setName] = useState('')
   const [rank, setRank] = useState('')
   const [badgeNumber, setBadgeNumber] = useState('')
   const [unit, setUnit] = useState('')
   const [searchTerm, setSearchTerm] = useState('')
-  const [editingOfficer, setEditingOfficer] = useState<Officer | null>(null)
+  const [editingOfficer, setEditingOfficer] = useState<EditingOfficer | null>(null)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [officerToDelete, setOfficerToDelete] = useState<string | null>(null)
   
@@ -119,53 +104,17 @@ function App() {
   const [selectedDate, setSelectedDate] = useState<Date | null>(null)
   const [dayDetailsOpen, setDayDetailsOpen] = useState(false)
 
-  // Auto-schedule off-duty time (default: 8:00 AM tomorrow)
+  // Schedule Off-Duty state
+  const [scheduleTime, setScheduleTime] = useState<string>('08:00')
+  const [isSchedulePopoverOpen, setIsSchedulePopoverOpen] = useState(false)
 
-  // Initialize status scheduler with task execution handler
-  const handleTaskExecute = useCallback((task: ScheduledTask) => {
-    // Execute the scheduled off-duty action
-    if (task.scheduledStatus === 'off-duty') {
-      const now = getCurrentTime()
-      
-      setOfficers(prevOfficers => 
-        prevOfficers.map(officer => {
-          if (officer.id === task.officerId) {
-            const updatedHistory = [...officer.dutyHistory]
-            const lastRecord = updatedHistory[updatedHistory.length - 1]
-            if (lastRecord && !lastRecord.timeOut) {
-              lastRecord.timeOut = now
-            }
-            return {
-              ...officer,
-              dutyHistory: updatedHistory,
-              currentStatus: 'off-duty'
-            }
-          }
-          return officer
-        })
-      )
-      
-      toast.success(`${task.officerName} is now OFF DUTY (auto-scheduled)`)
-    }
-  }, [])
-
-  const {
-    addTask,
-    cancelTask,
-    getTaskForOfficer,
-    getCountdown,
-  } = useStatusScheduler(handleTaskExecute)
-
-  // Save officers to localStorage whenever they change
+  // Refresh data when component mounts
   useEffect(() => {
-    localStorage.setItem('bcsp-1-attendance-tracker', JSON.stringify(officers))
-  }, [officers])
+    refreshData()
+  }, [refreshData])
 
-  const generateId = () => {
-    return Date.now().toString(36) + Math.random().toString(36).substr(2)
-  }
-
-  const handleAddOfficer = () => {
+  // Handle add officer
+  const handleAddOfficer = async () => {
     if (!name.trim()) {
       toast.error('Please enter officer name')
       return
@@ -175,100 +124,84 @@ function App() {
       return
     }
 
-    const newOfficer: Officer = {
-      id: generateId(),
-      name: name.trim(),
-      rank: rank.trim(),
-      badgeNumber: badgeNumber.trim() || undefined,
-      unit: unit.trim() || 'Unassigned',
-      dutyHistory: [],
-      currentStatus: 'off-duty'
+    try {
+      await addOfficer(name.trim(), rank.trim(), badgeNumber.trim(), unit.trim())
+      setName('')
+      setRank('')
+      setBadgeNumber('')
+      setUnit('')
+      toast.success('Officer registered successfully')
+    } catch {
+      toast.error('Failed to register officer')
     }
-
-    setOfficers([newOfficer, ...officers])
-    setName('')
-    setRank('')
-    setBadgeNumber('')
-    setUnit('')
-    toast.success('Officer registered successfully')
   }
 
-  const handleOnDuty = (id: string) => {
-    const today = getCurrentDate()
-    const now = getCurrentTime()
-    
-    // Find the officer to get their name for scheduling
-    const officer = officers.find(o => o.id === id)
+  // Handle on duty
+  const handleOnDuty = async (officerId: string) => {
+    const officer = officers.find(o => o.id === officerId)
     if (!officer) return
-    
-    setOfficers(officers.map(officer => {
-      if (officer.id === id) {
-        const newRecord: DutyRecord = {
-          timeIn: now,
-          timeOut: null,
-          date: today
-        }
-        return {
-          ...officer,
-          dutyHistory: [...officer.dutyHistory, newRecord],
-          currentStatus: 'on-duty'
-        }
-      }
-      return officer
-    }))
-    
-    // Automatically schedule off-duty for tomorrow at 8:00 AM
-    const tomorrow = new Date()
-    tomorrow.setDate(tomorrow.getDate() + 1)
-    tomorrow.setHours(8, 0, 0, 0)
-    
-    addTask(officer.id, officer.name, 'off-duty', tomorrow)
-    
-    toast.success(`${officer.name} is now ON DUTY`, {
-      description: 'Auto-scheduled off-duty for tomorrow at 8:00 AM'
-    })
+
+    try {
+      await checkInOfficer(officerId)
+      
+      // Automatically schedule off-duty for tomorrow at 8:00 AM
+      const tomorrow = new Date()
+      tomorrow.setDate(tomorrow.getDate() + 1)
+      tomorrow.setHours(8, 0, 0, 0)
+      
+      await scheduleTask(officerId, officer.name, 'off-duty', tomorrow)
+      
+      toast.success(`${officer.name} is now ON DUTY`, {
+        description: 'Auto-scheduled off-duty for tomorrow at 8:00 AM'
+      })
+    } catch {
+      toast.error('Failed to check in officer')
+    }
   }
 
-  const handleOffDuty = (id: string) => {
-    const now = getCurrentTime()
-    
-    setOfficers(officers.map(officer => {
-      if (officer.id === id) {
-        const updatedHistory = [...officer.dutyHistory]
-        const lastRecord = updatedHistory[updatedHistory.length - 1]
-        if (lastRecord && !lastRecord.timeOut) {
-          lastRecord.timeOut = now
-        }
-        return {
-          ...officer,
-          dutyHistory: updatedHistory,
-          currentStatus: 'off-duty'
-        }
-      }
-      return officer
-    }))
-    toast.success('Officer is now OFF DUTY')
+  // Handle off duty
+  const handleOffDuty = async (officerId: string) => {
+    try {
+      await checkOutOfficer(officerId)
+      toast.success('Officer is now OFF DUTY')
+    } catch {
+      toast.error('Failed to check out officer')
+    }
   }
 
-  const handleDelete = (id: string) => {
-    setOfficerToDelete(id)
+  // Handle delete
+  const handleDelete = (officerId: string) => {
+    setOfficerToDelete(officerId)
     setDeleteDialogOpen(true)
   }
 
-  const confirmDelete = () => {
+  // Confirm delete
+  const confirmDelete = async () => {
     if (officerToDelete) {
-      setOfficers(officers.filter(officer => officer.id !== officerToDelete))
-      toast.success('Officer removed from logbook')
-      setDeleteDialogOpen(false)
-      setOfficerToDelete(null)
+      try {
+        await deleteOfficer(officerToDelete)
+        toast.success('Officer removed from logbook')
+        setDeleteDialogOpen(false)
+        setOfficerToDelete(null)
+      } catch {
+        toast.error('Failed to remove officer')
+      }
     }
   }
 
-  const handleEdit = (officer: Officer) => {
-    setEditingOfficer(officer)
+  // Handle edit
+  const handleEdit = (officer: AppOfficer) => {
+    setEditingOfficer({
+      id: officer.id,
+      name: officer.name,
+      rank: officer.rank,
+      badgeNumber: officer.badgeNumber,
+      unit: officer.unit
+    })
   }
 
-  const saveEdit = () => {
+  // Save edit
+  const saveEdit = async () => {
     if (editingOfficer) {
       if (!editingOfficer.name.trim()) {
         toast.error('Name cannot be empty')
@@ -278,16 +211,23 @@ function App() {
         toast.error('Rank cannot be empty')
         return
       }
-      setOfficers(officers.map(officer => 
-        officer.id === editingOfficer.id ? editingOfficer : officer
-      ))
-      setEditingOfficer(null)
-      toast.success('Officer information updated')
+      try {
+        await updateOfficer(editingOfficer.id, {
+          name: editingOfficer.name.trim(),
+          rank: editingOfficer.rank.trim(),
+          badgeNumber: editingOfficer.badgeNumber?.trim(),
+          unit: editingOfficer.unit.trim(),
+        })
+        setEditingOfficer(null)
+        toast.success('Officer information updated')
+      } catch {
+        toast.error('Failed to update officer')
+      }
     }
   }
 
   // Get officers on duty for a specific date
-  const getOfficersOnDutyForDate = (date: Date): Officer[] => {
+  const getOfficersOnDutyForDate = (date: Date): AppOfficer[] => {
     const dateStr = format(date, 'yyyy-MM-dd')
     return officers.filter(officer => 
       officer.dutyHistory.some(record => record.date === dateStr)
@@ -322,10 +262,6 @@ function App() {
   const onDutyOfficers = officers.filter(o => o.currentStatus === 'on-duty')
   const offDutyOfficers = officers.filter(o => o.currentStatus === 'off-duty')
 
-  // Schedule Off-Duty state for calendar
-  const [scheduleTime, setScheduleTime] = useState<string>('08:00')
-  const [isSchedulePopoverOpen, setIsSchedulePopoverOpen] = useState(false)
-
   const getTomorrowAtTime = useCallback((timeValue: string): Date => {
     const tomorrow = new Date()
     tomorrow.setDate(tomorrow.getDate() + 1)
@@ -334,7 +270,7 @@ function App() {
     return tomorrow
   }, [])
 
-  const handleScheduleAllOffDuty = useCallback(() => {
+  const handleScheduleAllOffDuty = useCallback(async () => {
     const scheduledTime = getTomorrowAtTime(scheduleTime)
     
     if (scheduledTime <= new Date()) {
@@ -348,9 +284,9 @@ function App() {
     }
 
     // Schedule off-duty for all on-duty officers
-    onDutyOfficers.forEach(officer => {
-      addTask(officer.id, officer.name, 'off-duty', scheduledTime)
-    })
+    for (const officer of onDutyOfficers) {
+      await scheduleTask(officer.id, officer.name, 'off-duty', scheduledTime)
+    }
 
     const timeLabel = new Date(`2000-01-01T${scheduleTime}`).toLocaleTimeString('en-US', {
       hour: 'numeric',
@@ -360,7 +296,7 @@ function App() {
 
     toast.success(`Scheduled ${onDutyOfficers.length} officer${onDutyOfficers.length > 1 ? 's' : ''} to go off-duty tomorrow at ${timeLabel}`)
     setIsSchedulePopoverOpen(false)
-  }, [onDutyOfficers, scheduleTime, addTask, getTomorrowAtTime])
+  }, [onDutyOfficers, scheduleTime, scheduleTask, getTomorrowAtTime])
 
   const filteredOfficers = officers.filter(officer =>
     officer.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -368,6 +304,38 @@ function App() {
     officer.unit.toLowerCase().includes(searchTerm.toLowerCase()) ||
     officer.badgeNumber?.toLowerCase().includes(searchTerm.toLowerCase())
   )
+
+  // Get countdown for a scheduled task
+  const getCountdown = (scheduledTime: string) => {
+    const now = new Date()
+    const scheduled = new Date(scheduledTime)
+    const diff = scheduled.getTime() - now.getTime()
+
+    if (diff <= 0) {
+      return {
+        days: 0,
+        hours: 0,
+        minutes: 0,
+        seconds: 0,
+        totalMilliseconds: 0,
+        isExpired: true
+      }
+    }
+
+    const days = Math.floor(diff / (1000 * 60 * 60 * 24))
+    const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60))
+    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60))
+    const seconds = Math.floor((diff % (1000 * 60)) / 1000)
+
+    return {
+      days,
+      hours,
+      minutes,
+      seconds,
+      totalMilliseconds: diff,
+      isExpired: false
+    }
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-blue-50">
@@ -391,6 +359,27 @@ function App() {
       </header>
 
       <main className="container mx-auto px-4 py-8 max-w-7xl">
+        {/* Connection Status */}
+        <div className="flex items-center justify-end gap-2 mb-4">
+          <Badge 
+            variant={isSupabaseConnected ? "default" : "secondary"}
+            className={`flex items-center gap-1 ${isSupabaseConnected ? 'bg-green-600' : ''}`}
+          >
+            {isSupabaseConnected ? (
+              <>
+                <Wifi className="w-3 h-3" />
+                <Database className="w-3 h-3" />
+                Supabase Connected
+              </>
+            ) : (
+              <>
+                <WifiOff className="w-3 h-3" />
+                Local Mode
+              </>
+            )}
+          </Badge>
+        </div>
+
         {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
           <Card className="bg-gradient-to-r from-green-500 to-green-600 text-white border-0 shadow-lg">
@@ -599,98 +588,108 @@ function App() {
               />
             </div>
 
+            {/* Loading State */}
+            {loading && (
+              <div className="text-center py-8 text-gray-500">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div>
+                <p className="text-sm">Loading officers...</p>
+              </div>
+            )}
+
             {/* Officer List */}
-            <Card className="border-2 border-gray-100 shadow-xl bg-white/80 backdrop-blur">
-              <CardHeader className="bg-gradient-to-r from-gray-50 to-white border-b border-gray-100 py-3">
-                <CardTitle className="flex items-center gap-2 text-gray-700 text-base">
-                  <Users className="w-4 h-4" />
-                  Officers List
-                  <Badge variant="secondary" className="ml-2 text-xs">
-                    {filteredOfficers.length}
-                  </Badge>
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-0 max-h-80 overflow-y-auto">
-                {filteredOfficers.length === 0 ? (
-                  <div className="p-6 text-center text-gray-500">
-                    <Users className="w-10 h-10 mx-auto mb-2 text-gray-300" />
-                    <p className="text-sm">No officers registered</p>
-                  </div>
-                ) : (
-                  <div className="divide-y divide-gray-100">
-                    {filteredOfficers.map((officer) => (
-                      <div key={officer.id} className="p-3 hover:bg-gray-50">
-                        <div className="flex items-center justify-between">
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="font-medium text-sm truncate">{officer.name}</span>
-                              {officer.currentStatus === 'on-duty' ? (
-                                <Badge className="bg-green-500 text-white text-xs">On Duty</Badge>
-                              ) : (
-                                <Badge variant="outline" className="text-gray-500 text-xs">Off Duty</Badge>
-                              )}
+            {!loading && (
+              <Card className="border-2 border-gray-100 shadow-xl bg-white/80 backdrop-blur">
+                <CardHeader className="bg-gradient-to-r from-gray-50 to-white border-b border-gray-100 py-3">
+                  <CardTitle className="flex items-center gap-2 text-gray-700 text-base">
+                    <Users className="w-4 h-4" />
+                    Officers List
+                    <Badge variant="secondary" className="ml-2 text-xs">
+                      {filteredOfficers.length}
+                    </Badge>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="p-0 max-h-80 overflow-y-auto">
+                  {filteredOfficers.length === 0 ? (
+                    <div className="p-6 text-center text-gray-500">
+                      <Users className="w-10 h-10 mx-auto mb-2 text-gray-300" />
+                      <p className="text-sm">No officers registered</p>
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-gray-100">
+                      {filteredOfficers.map((officer) => (
+                        <div key={officer.id} className="p-3 hover:bg-gray-50">
+                          <div className="flex items-center justify-between">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="font-medium text-sm truncate">{officer.name}</span>
+                                {officer.currentStatus === 'on-duty' ? (
+                                  <Badge className="bg-green-500 text-white text-xs">On Duty</Badge>
+                                ) : (
+                                  <Badge variant="outline" className="text-gray-500 text-xs">Off Duty</Badge>
+                                )}
+                              </div>
+                              <div className="text-xs text-gray-500 mt-0.5">
+                                {officer.rank} {officer.badgeNumber && `• #${officer.badgeNumber}`} {officer.unit && `• ${officer.unit}`}
+                              </div>
                             </div>
-                            <div className="text-xs text-gray-500 mt-0.5">
-                              {officer.rank} {officer.badgeNumber && `• #${officer.badgeNumber}`} {officer.unit && `• ${officer.unit}`}
-                            </div>
-                          </div>
-                          <div className="flex gap-1 ml-2">
-                            {officer.currentStatus === 'off-duty' ? (
-                              <Button
-                                size="sm"
-                                onClick={() => handleOnDuty(officer.id)}
-                                className="bg-green-600 hover:bg-green-700 text-white h-7 px-2 text-xs"
-                              >
-                                <UserCheck className="w-3 h-3 mr-1" />
-                                On
-                              </Button>
-                            ) : (
-                              <>
+                            <div className="flex gap-1 ml-2">
+                              {officer.currentStatus === 'off-duty' ? (
                                 <Button
                                   size="sm"
-                                  onClick={() => handleOffDuty(officer.id)}
-                                  variant="outline"
-                                  className="border-orange-400 text-orange-600 hover:bg-orange-50 h-7 px-2 text-xs"
+                                  onClick={() => handleOnDuty(officer.id)}
+                                  className="bg-green-600 hover:bg-green-700 text-white h-7 px-2 text-xs"
                                 >
-                                  <UserX className="w-3 h-3 mr-1" />
-                                  Off
+                                  <UserCheck className="w-3 h-3 mr-1" />
+                                  On
                                 </Button>
-                                <ScheduleOffDutyButton
-                                  officerId={officer.id}
-                                  officerName={officer.name}
-                                  currentStatus={officer.currentStatus}
-                                  scheduledTask={getTaskForOfficer(officer.id)}
-                                  onSchedule={addTask}
-                                  onCancelSchedule={cancelTask}
-                                  getCountdown={getCountdown}
-                                  compact
-                                />
-                              </>
-                            )}
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => handleEdit(officer)}
-                              className="text-blue-600 hover:bg-blue-50 h-7 w-7 p-0"
-                            >
-                              <Edit2 className="w-3 h-3" />
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => handleDelete(officer.id)}
-                              className="text-red-600 hover:bg-red-50 h-7 w-7 p-0"
-                            >
-                              <Trash2 className="w-3 h-3" />
-                            </Button>
+                              ) : (
+                                <>
+                                  <Button
+                                    size="sm"
+                                    onClick={() => handleOffDuty(officer.id)}
+                                    variant="outline"
+                                    className="border-orange-400 text-orange-600 hover:bg-orange-50 h-7 px-2 text-xs"
+                                  >
+                                    <UserX className="w-3 h-3 mr-1" />
+                                    Off
+                                  </Button>
+                                  <ScheduleOffDutyButton
+                                    officerId={officer.id}
+                                    officerName={officer.name}
+                                    currentStatus={officer.currentStatus}
+                                    scheduledTask={getTaskForOfficer(officer.id)}
+                                    onSchedule={scheduleTask}
+                                    onCancelSchedule={cancelTask}
+                                    getCountdown={getCountdown}
+                                    compact
+                                  />
+                                </>
+                              )}
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => handleEdit(officer)}
+                                className="text-blue-600 hover:bg-blue-50 h-7 w-7 p-0"
+                              >
+                                <Edit2 className="w-3 h-3" />
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => handleDelete(officer.id)}
+                                className="text-red-600 hover:bg-red-50 h-7 w-7 p-0"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </Button>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
 
             {/* Add Officer Card */}
             <Card className="border-2 border-blue-100 shadow-xl bg-white/80 backdrop-blur">
@@ -744,6 +743,7 @@ function App() {
                     onClick={handleAddOfficer}
                     size="sm"
                     className="bg-blue-700 hover:bg-blue-800 text-white"
+                    disabled={loading}
                   >
                     <UserPlus className="w-4 h-4 mr-1" />
                     Register
@@ -893,7 +893,7 @@ function App() {
             <Button variant="outline" onClick={() => setEditingOfficer(null)}>
               Cancel
             </Button>
-            <Button onClick={saveEdit} className="bg-blue-700 hover:bg-blue-800">
+            <Button onClick={saveEdit} className="bg-blue-700 hover:bg-blue-800" disabled={loading}>
               Save Changes
             </Button>
           </DialogFooter>
@@ -913,7 +913,7 @@ function App() {
             <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>
               Cancel
             </Button>
-            <Button variant="destructive" onClick={confirmDelete}>
+            <Button variant="destructive" onClick={confirmDelete} disabled={loading}>
               Remove
             </Button>
           </DialogFooter>
