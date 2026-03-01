@@ -633,9 +633,9 @@ export function useSupabaseOfficers(retryConfig: RetryConfig = DEFAULT_RETRY_CON
   // Cleanup on Unmount
   // ============================================================================
   useEffect(() => {
+    const controller = abortControllerRef.current;
     return () => {
       isMountedRef.current = false;
-      const controller = abortControllerRef.current;
       if (controller) {
         controller.abort();
       }

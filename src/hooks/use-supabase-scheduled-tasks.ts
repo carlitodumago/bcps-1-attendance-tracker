@@ -575,9 +575,9 @@ export function useSupabaseScheduledTasks(retryConfig: RetryConfig = DEFAULT_RET
   // Cleanup
   // ============================================================================
   useEffect(() => {
+    const controller = abortControllerRef.current;
     return () => {
       isMountedRef.current = false;
-      const controller = abortControllerRef.current;
       if (controller) {
         controller.abort();
       }

@@ -787,9 +787,9 @@ export function useSupabaseDutyRecords(retryConfig: RetryConfig = DEFAULT_RETRY_
   // Cleanup
   // ============================================================================
   useEffect(() => {
+    const controller = abortControllerRef.current;
     return () => {
       isMountedRef.current = false;
-      const controller = abortControllerRef.current;
       if (controller) {
         controller.abort();
       }
