@@ -107,8 +107,6 @@ function App() {
   const [dayDetailsOpen, setDayDetailsOpen] = useState(false)
   const [assignDialogOpen, setAssignDialogOpen] = useState(false)
   const [selectedOfficerId, setSelectedOfficerId] = useState<string>('')
-  const [timeIn, setTimeIn] = useState('')
-  const [timeOut, setTimeOut] = useState('')
   const [notes, setNotes] = useState('')
 
   // Schedule Off-Duty state
@@ -153,10 +151,11 @@ function App() {
 
       // Automatically schedule off-duty for tomorrow at 8:00 AM
   const tomorrow = (() => {
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    tomorrow.setHours(8, 0, 0, 0);
-    return tomorrow;
+    const now = new Date();
+    const phTime = new Date(now.toLocaleString('en-PH', { timeZone: 'Asia/Manila' }));
+    phTime.setDate(phTime.getDate() + 1);
+    phTime.setHours(8, 0, 0, 0);
+    return phTime;
   })()
 
       await scheduleTask(officerId, officer.name, 'off-duty', tomorrow)
@@ -303,10 +302,9 @@ function App() {
     return tomorrow;
   })()
 
-    // Current time in Asia/Manila for comparison
-    const nowInPh = new Date();
+    const now = new Date();
 
-    if (scheduledTime <= nowInPh) {
+    if (scheduledTime <= now) {
       toast.error('Selected time has already passed')
       return
     }
@@ -341,23 +339,19 @@ function App() {
       officer.badgeNumber?.toLowerCase().includes(searchTerm.toLowerCase()),
   )
 
-// Helper to format Supabase time (HH:MM:SS) to 12-hour format (times are already stored in PH timezone)
+// Helper to format Supabase time (HH:MM:SS) to 12-hour format - times stored as UTC, add 8 for PH display
   const formatTime = (timeStr: string | null | undefined) => {
     if (!timeStr) return '';
-    // Times are already stored in Philippine timezone, just format to 12-hour
-    const [hours, minutes, seconds] = timeStr.split(':').map(Number);
-    const date = new Date();
-    date.setHours(hours || 0, minutes || 0, seconds || 0, 0);
-    return date.toLocaleTimeString([], { 
-      hour: 'numeric', 
-      minute: '2-digit', 
-      hour12: true 
-    });
+    const [hours, minutes] = timeStr.split(':').map(Number);
+    // Add 8 hours for Philippine timezone
+    let adjustedHours = (hours + 8) % 24;
+    const hour12 = adjustedHours % 12 || 12;
+    const ampm = adjustedHours >= 12 ? 'PM' : 'AM';
+    return `${hour12}:${minutes.toString().padStart(2, '0')} ${ampm}`;
   }
 
   // Get countdown for a scheduled task
   const getCountdown = (scheduledTime: string) => {
-    // Ensure we are comparing against Philippine time consistently
     const now = new Date();
     const scheduled = new Date(scheduledTime)
     const diff = scheduled.getTime() - now.getTime()
@@ -869,7 +863,9 @@ function App() {
                           <div>
                             <div className="font-medium flex items-center gap-2">
                               {officer.name}
-                              <Badge className="bg-green-500 text-white text-xs">On Duty</Badge>
+                              <Badge className={officer.currentStatus === 'on-duty' ? 'bg-green-500 text-white text-xs' : 'bg-gray-400 text-white text-xs'}>
+                                {officer.currentStatus === 'on-duty' ? 'On Duty' : 'Off Duty'}
+                              </Badge>
                             </div>
                             <div className="text-sm text-gray-600">
                               {officer.rank}{' '}
@@ -879,31 +875,26 @@ function App() {
                           </div>
                           <div className="text-right flex items-center gap-1">
                             {dutyRecord && (
-                              <div className="text-sm">
-                                <div className="text-green-700 flex items-center gap-1">
-                                  <Clock className="w-3 h-3" />
-                                  <span className="text-xs text-gray-500">In:</span>{' '}
-                                  {dutyRecord.timeIn}
-                                </div>
-                                {dutyRecord.timeOut && (
-                                  <div className="text-orange-700 flex items-center gap-1">
-                                    <Clock className="w-3 h-3" />
-                                    <span className="text-xs text-gray-500">Out:</span>{' '}
-                                    {dutyRecord.timeOut}
-                                  </div>
-                                )}
+                              <div className="text-green-700 flex items-center gap-1">
+                                <Clock className="w-3 h-3" />
+                                Checked In
                               </div>
                             )}
                             {dutyRecord && (
                                 <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => setDeleteDutyDialog({ open: true, dutyRecordId: dutyRecordId || '' })}
-                                className="h-6 w-6 p-0 text-red-500 hover:text-red-700 hover:bg-red-50 -ml-1"
-                                title="Remove duty record"
-                              >
-                                <Trash2 className="w-3 h-3" />
-                              </Button>
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (dutyRecordId) {
+                                      setDeleteDutyDialog({ open: true, dutyRecordId });
+                                    }
+                                  }}
+                                  className="h-8 w-8 p-0 text-red-500 hover:text-red-700 hover:bg-red-50 flex-shrink-0"
+                                  title="Remove duty record"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </Button>
                             )}
                           </div>
                         </div>
@@ -940,33 +931,20 @@ function App() {
                   <SelectValue placeholder="Select officer" />
                 </SelectTrigger>
                 <SelectContent>
-                  {officers.map(officer => (
-                    <SelectItem key={officer.id} value={officer.id}>
-                      {officer.name} ({officer.rank})
-                    </SelectItem>
-                  ))}
+                  {(() => {
+                    const dateStr = selectedDate ? format(selectedDate, 'yyyy-MM-dd') : '';
+                    const officersOnDutyIds = new Set(
+                      getOfficersOnDutyForDate(selectedDate || new Date()).map(o => o.id)
+                    );
+                    const availableOfficers = officers.filter(o => !officersOnDutyIds.has(o.id));
+                    return availableOfficers.map(officer => (
+                      <SelectItem key={officer.id} value={officer.id}>
+                        {officer.name} ({officer.rank})
+                      </SelectItem>
+                    ));
+                  })()}
                 </SelectContent>
               </Select>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs font-medium text-gray-700 block mb-1">Time In (optional)</label>
-                <Input
-                  type="time"
-                  value={timeIn}
-                  onChange={(e) => setTimeIn(e.target.value)}
-                  placeholder="08:00"
-                />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-gray-700 block mb-1">Time Out (optional)</label>
-                <Input
-                  type="time"
-                  value={timeOut}
-                  onChange={(e) => setTimeOut(e.target.value)}
-                  placeholder="17:00"
-                />
-              </div>
             </div>
             </div>
             <DialogFooter>
@@ -975,24 +953,28 @@ function App() {
             </Button>
             <Button 
               onClick={async () => {
-                if (!selectedDate || !selectedOfficerId) return;
+                if (!selectedDate || !selectedOfficerId) {
+                  toast.error('Please select an officer');
+                  return;
+                }
                 try {
+                  const dateStr = format(selectedDate, 'yyyy-MM-dd');
+                  console.log('Assigning officer:', selectedOfficerId, 'for date:', dateStr);
                   await addDutyRecord(
                     selectedOfficerId,
-                    format(selectedDate, 'yyyy-MM-dd'),
-                    timeIn || undefined,
-                    timeOut || undefined,
-                    notes || undefined
+                    dateStr,
+                    undefined,
+                    undefined,
+                    undefined
                   );
                   toast.success('Officer assigned to duty');
                   setAssignDialogOpen(false);
                   // Reset form
                   setSelectedOfficerId('');
-                  setTimeIn('');
-                  setTimeOut('');
                   setNotes('');
-                } catch {
-                  toast.error('Failed to assign duty');
+                } catch (error: any) {
+                  console.error('Assign error:', error);
+                  toast.error(error?.message || 'Failed to assign duty');
                 }
               }}
               disabled={!selectedOfficerId || loading}

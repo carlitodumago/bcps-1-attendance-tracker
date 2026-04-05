@@ -20,14 +20,17 @@ import { Clock, X, Calendar } from 'lucide-react';
 import { toast } from 'sonner';
 import type { ScheduledTask, CountdownInfo } from '../types/scheduler';
 import { DEFAULT_TIME_OPTIONS } from '../types/scheduler';
-// getCurrentTime/getTomorrowAtTime replaced inline
-const getCurrentTime = (): Date => new Date();
+const getPhTime = (): Date => {
+  const now = new Date();
+  return new Date(now.toLocaleString('en-PH', { timeZone: 'Asia/Manila' }));
+};
+
 const getTomorrowAtTime = (timeStr: string): Date => {
   const [hours, minutes] = timeStr.split(':').map(Number);
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  tomorrow.setHours(hours, minutes, 0, 0);
-  return tomorrow;
+  const phTime = getPhTime();
+  phTime.setDate(phTime.getDate() + 1);
+  phTime.setHours(hours, minutes, 0, 0);
+  return phTime;
 };
 
 interface ScheduleOffDutyButtonProps {
@@ -86,7 +89,7 @@ export function ScheduleOffDutyButton({
     const scheduledTime = getTomorrowAtTime(selectedTime);
     
     // Current time in Asia/Manila for comparison
-    const nowInPh = getCurrentTime();
+    const nowInPh = getPhTime();
 
     // Check if the time is in the past (for edge cases)
     if (scheduledTime <= nowInPh) {

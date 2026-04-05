@@ -10,12 +10,10 @@ import { useSupabaseOfficers } from './use-supabase-officers';
 import { useSupabaseDutyRecords } from './use-supabase-duty-records';
 import { useSupabaseScheduledTasks } from './use-supabase-scheduled-tasks';
 import { useStatusScheduler } from './use-status-scheduler';
-// getFormattedCurrentTime - now using Philippine Time
+// getFormattedCurrentTime - using Philippine Time via toLocaleString
 const getFormattedCurrentTime = (formatToken: string): string => {
-  // Get current time and convert to Philippine Time (UTC+8)
   const now = new Date();
-  const utcTime = now.getTime() + (now.getTimezoneOffset() * 60000);
-  const phtTime = new Date(utcTime + (8 * 3600000)); // +8 hours for PH
+  const phtTime = new Date(now.toLocaleString('en-PH', { timeZone: 'Asia/Manila' }));
   
   const pad = (n: number) => n.toString().padStart(2, '0');
   
@@ -295,20 +293,19 @@ export function useUnifiedData(onTaskExecute?: (task: ScheduledTask) => void): U
       return () => clearTimeout(timeoutId);
     }
     
-    // Subscribe to duty records changes for immediate bidirectional sync
+    // Subscribe to duty records changes for calendar only - don't change officer status
     let unsubscribe: (() => void) | undefined;
     if (onDutyRecordsChange) {
       unsubscribe = onDutyRecordsChange((officerId, status, dutyRecord) => {
-        if (officerId && status) {
-          updateOfficerDutyStatus(officerId, status, dutyRecord);
-        }
+        // Don't update officer status - calendar only tracks assignments
+        // The duty record will still be visible in the calendar
       });
     }
     
     return () => {
       if (unsubscribe) unsubscribe();
     };
-  }, [supabaseAvailable, dbOfficers.length, onDutyRecordsChange, syncOfficersWithDutyRecords, updateOfficerDutyStatus]);
+  }, [supabaseAvailable, dbOfficers.length, onDutyRecordsChange, syncOfficersWithDutyRecords]);
 
   // Use appropriate data source
   const officers = supabaseAvailable ? syncedOfficers : localOfficers;
@@ -389,12 +386,11 @@ export function useUnifiedData(onTaskExecute?: (task: ScheduledTask) => void): U
   }, [localOfficers]);
 
   // Check in officer with optimistic update
-  const checkInOfficer = useCallback(async (officerId: string) => {
-    // We don't need to generate a local 'now' because we use Supabase real-time updates.
-    // However, for the immediate optimistic update, we can generate a temporary time string.
-    // To match our previous format and make the UI look right immediately, use en-PH locale.
-    const now = getFormattedCurrentTime('hh:mm:ss a');
-    // Format the current date in Philippine Time for the 'date' property
+const checkInOfficer = useCallback(async (officerId: string) => {
+    const now = new Date();
+    const phtTime = new Date(now.toLocaleString('en-PH', { timeZone: 'Asia/Manila' }));
+    const utcTime = new Date(phtTime.getTime() - (8 * 3600000));
+    const timeIn24 = `${utcTime.getHours().toString().padStart(2, '0')}:${utcTime.getMinutes().toString().padStart(2, '0')}:${utcTime.getSeconds().toString().padStart(2, '0')}`;
     const today = getFormattedCurrentTime('yyyy-MM-dd');
 
     // Store original state for potential rollback (using refs to get latest)
@@ -409,7 +405,7 @@ export function useUnifiedData(onTaskExecute?: (task: ScheduledTask) => void): U
             currentStatus: 'on-duty' as const,
             dutyHistory: [
               ...officer.dutyHistory,
-              { timeIn: now, timeOut: null, date: today },
+              { timeIn: timeIn24, timeOut: null, date: today },
             ],
           };
         }
@@ -436,7 +432,10 @@ export function useUnifiedData(onTaskExecute?: (task: ScheduledTask) => void): U
 
   // Check out officer with optimistic update
   const checkOutOfficer = useCallback(async (officerId: string): Promise<boolean> => {
-    const now = getFormattedCurrentTime('hh:mm:ss a');
+    const now = new Date();
+    const phtTime = new Date(now.toLocaleString('en-PH', { timeZone: 'Asia/Manila' }));
+    const utcTime = new Date(phtTime.getTime() - (8 * 3600000));
+    const timeOut24 = `${utcTime.getHours().toString().padStart(2, '0')}:${utcTime.getMinutes().toString().padStart(2, '0')}:${utcTime.getSeconds().toString().padStart(2, '0')}`;
 
     // Store original state for potential rollback (using refs to get latest)
     const originalOfficers = supabaseAvailable ? [...syncedOfficersRef.current] : [...localOfficersRef.current];
@@ -448,7 +447,7 @@ export function useUnifiedData(onTaskExecute?: (task: ScheduledTask) => void): U
           const updatedHistory = [...officer.dutyHistory];
           const lastRecord = updatedHistory[updatedHistory.length - 1];
           if (lastRecord && !lastRecord.timeOut) {
-            lastRecord.timeOut = now;
+            lastRecord.timeOut = timeOut24;
           }
           return {
             ...officer,
@@ -552,31 +551,28 @@ export function useUnifiedData(onTaskExecute?: (task: ScheduledTask) => void): U
     checkOutOfficer,
     addDutyRecord: useCallback(async (officerId: string, dutyDate: string, timeIn?: string, timeOut?: string | null, notes?: string) => {
       if (supabaseAvailable) {
-        // Get current time in Philippine Time
+        // Get current time without timezone conversion - store as-is
         const now = new Date();
-        const utcTime = now.getTime() + (now.getTimezoneOffset() * 60000);
-        const phtTime = new Date(utcTime + (8 * 3600000));
-        const timeInValue = timeIn || phtTime.toTimeString().slice(0, 8);
+        // Use provided timeIn or default to current time, but not undefined/empty string
+        const timeInValue = timeIn && timeIn.trim() ? timeIn : now.toTimeString().slice(0, 8);
         
         await dutyRecordsHook.addDutyRecord({
           officer_id: officerId,
           duty_date: dutyDate,
           time_in: timeInValue,
-          time_out: timeOut || null,
+          time_out: timeOut !== undefined && timeOut !== null && timeOut.trim() !== '' ? timeOut : undefined,
           notes,
         });
       } else {
         // Local fallback: add to current officer dutyHistory
         const now = new Date();
-        const utcTime = now.getTime() + (now.getTimezoneOffset() * 60000);
-        const phtTime = new Date(utcTime + (8 * 3600000));
         
         setLocalOfficers(prev => prev.map(o => {
           if (o.id === officerId) {
             return {
               ...o,
               dutyHistory: [...o.dutyHistory, {
-                timeIn: timeIn || phtTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
+                timeIn: timeIn || now.toLocaleTimeString('en-PH', {hour: '2-digit', minute:'2-digit'}),
                 timeOut: timeOut ?? null,
                 date: dutyDate
               }]

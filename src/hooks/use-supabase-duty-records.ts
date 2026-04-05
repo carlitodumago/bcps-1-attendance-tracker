@@ -455,11 +455,9 @@ export function useSupabaseDutyRecords(retryConfig: RetryConfig = DEFAULT_RETRY_
 
         // Update the active duty record with time_out
         const activeRecord = activeRecords[0];
-        // Get current time in Philippine Time (UTC+8)
+        // Get current time as-is
         const now = new Date();
-        const utcTime = now.getTime() + (now.getTimezoneOffset() * 60000);
-        const phtTime = new Date(utcTime + (8 * 3600000));
-        const timeOut = phtTime.toTimeString().slice(0, 8); // HH:MM:SS format in PH time
+        const timeOut = now.toTimeString().slice(0, 8); // HH:MM:SS format
 
         const { error: updateError } = await supabase
           .from('duty_records')
@@ -503,12 +501,21 @@ export function useSupabaseDutyRecords(retryConfig: RetryConfig = DEFAULT_RETRY_
     }
 
     const tempId = `temp-${Date.now()}`;
+    // Always set time_out to prevent triggering the officer status update
+    // Calendar assignments should NOT change officer status
+    // Use 23:59:59 to ensure it's always after time_in
+    const timeOutValue = record.time_out ?? '23:59:59';
+    const recordWithTimeOut = {
+      ...record,
+      time_out: timeOutValue
+    };
+    
     const optimisticRecord: DutyRecord = {
       id: tempId,
       officer_id: record.officer_id,
       duty_date: record.duty_date,
       time_in: record.time_in,
-      time_out: record.time_out || null,
+      time_out: timeOutValue,
       notes: record.notes || null,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -517,14 +524,19 @@ export function useSupabaseDutyRecords(retryConfig: RetryConfig = DEFAULT_RETRY_
     setDutyRecords(prev => [optimisticRecord, ...prev]);
 
     try {
+      console.log('Inserting duty record:', recordWithTimeOut);
       const data = await fetchWithRetry(async () => {
         const { data, error: supabaseError } = await supabase
           .from('duty_records')
-          .insert([record])
+          .insert([recordWithTimeOut])
           .select()
           .single();
 
-        if (supabaseError) throw supabaseError;
+        if (supabaseError) {
+          console.error('Supabase insert error:', supabaseError);
+          throw supabaseError;
+        }
+        console.log('Insert result:', data);
         return data;
       });
 
@@ -821,20 +833,17 @@ export function useSupabaseDutyRecords(retryConfig: RetryConfig = DEFAULT_RETRY_
                 if (prev.find(r => r.id === newRecord.id)) return prev;
                 return [newRecord, ...prev];
               });
-              // Notify with officer info for immediate sync
-              notifyDutyRecordsChange(newRecord.officer_id, 'on-duty', newRecord);
+              // Don't change officer status - just record the duty for calendar
             } else if (payload.eventType === 'UPDATE') {
               const updatedRecord = payload.new as DutyRecord;
               setDutyRecords(prev =>
                 prev.map(r => (r.id === updatedRecord.id ? updatedRecord : r))
               );
-              // Determine status based on time_out
-              const status = updatedRecord.time_out ? 'off-duty' : 'on-duty';
-              notifyDutyRecordsChange(updatedRecord.officer_id, status, updatedRecord);
+              // Don't change officer status - calendar only
             } else if (payload.eventType === 'DELETE') {
               const deletedRecord = payload.old as DutyRecord;
               setDutyRecords(prev => prev.filter(r => r.id !== payload.old.id));
-              notifyDutyRecordsChange(deletedRecord.officer_id, 'off-duty');
+              // Don't change officer status - calendar only
             }
 
             setDutyRecords(current => {

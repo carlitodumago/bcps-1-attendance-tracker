@@ -9,8 +9,10 @@ import type {
   CountdownInfo 
 } from '../types/scheduler';
 import { SCHEDULER_STORAGE_KEY } from '../types/scheduler';
-// getCurrentTime replaced with new Date()
-const getCurrentTime = (): Date => new Date();
+const getPhTime = (): Date => {
+  const now = new Date();
+  return new Date(now.toLocaleString('en-PH', { timeZone: 'Asia/Manila' }));
+};
 
 interface UseStatusSchedulerReturn {
   pendingTasks: ScheduledTask[];
@@ -54,7 +56,7 @@ export function useStatusScheduler(
   // Check for tasks that need to be executed
   const checkAndExecuteTasks = useCallback(async () => {
     // Current time in Asia/Manila for comparison
-    const now = getCurrentTime();
+    const now = getPhTime();
     
     for (const task of tasks) {
       if (task.status === 'pending') {
@@ -157,7 +159,7 @@ export function useStatusScheduler(
 
   // Get countdown information for a scheduled time
   const getCountdown = useCallback((scheduledTime: string): CountdownInfo => {
-    const now = getCurrentTime();
+    const now = getPhTime();
     const scheduled = new Date(scheduledTime);
     const diff = scheduled.getTime() - now.getTime();
 
