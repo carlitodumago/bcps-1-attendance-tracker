@@ -390,6 +390,11 @@ function App() {
       <header className="bg-gradient-to-r from-blue-900 via-blue-800 to-blue-900 text-white shadow-lg">
         <div className="container mx-auto px-4 py-6">
           <div className="flex items-center justify-center gap-4">
+            <img
+              src="/pnp_logo_nobg.png"
+              alt="Philippine National Police"
+              className="h-16 md:h-20 object-contain"
+            />
             <div className="bg-white/10 p-3 rounded-full backdrop-blur-sm">
               <Shield className="w-10 h-10 text-yellow-400" />
             </div>
@@ -397,6 +402,11 @@ function App() {
               <h1 className="text-2xl md:text-3xl font-bold tracking-wide">BCPS-1</h1>
               <p className="text-blue-200 text-sm md:text-base">Attendance Tracker</p>
             </div>
+            <img
+              src="/butuan_ps1_nobg.png"
+              alt="Butuan City Police Station 1"
+              className="h-16 md:h-20 object-contain"
+            />
           </div>
         </div>
       </header>
