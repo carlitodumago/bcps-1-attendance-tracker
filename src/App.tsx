@@ -1,4 +1,4 @@
-  import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -99,7 +99,9 @@ function App() {
   const [editingOfficer, setEditingOfficer] = useState<EditingOfficer | null>(null)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [officerToDelete, setOfficerToDelete] = useState<string | null>(null)
-  const [deleteDutyDialog, setDeleteDutyDialog] = useState<{ open: boolean; dutyRecordId: string }>({ open: false, dutyRecordId: '' })
+  const [deleteDutyDialog, setDeleteDutyDialog] = useState<{ open: boolean; dutyRecordId: string }>(
+    { open: false, dutyRecordId: '' },
+  )
 
   // Calendar state
   const [currentMonth, setCurrentMonth] = useState(new Date())
@@ -150,13 +152,13 @@ function App() {
       await checkInOfficer(officerId)
 
       // Automatically schedule off-duty for tomorrow at 8:00 AM
-  const tomorrow = (() => {
-    const now = new Date();
-    const phTime = new Date(now.toLocaleString('en-PH', { timeZone: 'Asia/Manila' }));
-    phTime.setDate(phTime.getDate() + 1);
-    phTime.setHours(8, 0, 0, 0);
-    return phTime;
-  })()
+      const tomorrow = (() => {
+        const now = new Date()
+        const phTime = new Date(now.toLocaleString('en-PH', { timeZone: 'Asia/Manila' }))
+        phTime.setDate(phTime.getDate() + 1)
+        phTime.setHours(8, 0, 0, 0)
+        return phTime
+      })()
 
       await scheduleTask(officerId, officer.name, 'off-duty', tomorrow)
 
@@ -170,17 +172,17 @@ function App() {
 
   // Handle off duty
   const handleOffDuty = async (officerId: string) => {
-    console.log('handleOffDuty called for:', officerId);
+    console.log('handleOffDuty called for:', officerId)
     try {
       const result = await checkOutOfficer(officerId)
-      console.log('checkOutOfficer result:', result);
+      console.log('checkOutOfficer result:', result)
       if (result) {
         toast.success('Officer is now OFF DUTY')
       } else {
         toast.error('Failed to check out officer')
       }
     } catch (error) {
-      console.error('handleOffDuty error:', error);
+      console.error('handleOffDuty error:', error)
       toast.error('Failed to check out officer')
     }
   }
@@ -245,15 +247,15 @@ function App() {
   // Get officers on duty for a specific date
   const getOfficersOnDutyForDate = (date: Date): AppOfficer[] => {
     const dateStr = format(date, 'yyyy-MM-dd')
-    
+
     // Use Supabase duty records if available
     if (dutyRecords && dutyRecords.length > 0) {
       const officerIdsOnDuty = dutyRecords
-        .filter(record => record.duty_date === dateStr)
-        .map(record => record.officer_id);
-      return officers.filter((officer) => officerIdsOnDuty.includes(officer.id));
+        .filter((record) => record.duty_date === dateStr)
+        .map((record) => record.officer_id)
+      return officers.filter((officer) => officerIdsOnDuty.includes(officer.id))
     }
-    
+
     // Fallback to local duty history
     return officers.filter((officer) =>
       officer.dutyHistory?.some((record) => record.date === dateStr),
@@ -294,15 +296,15 @@ function App() {
   const offDutyOfficers = officers.filter((o) => o.currentStatus === 'off-duty')
 
   const handleScheduleAllOffDuty = useCallback(async () => {
-  const scheduledTime = (() => {
-    const [hours, minutes] = scheduleTime.split(':').map(Number);
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    tomorrow.setHours(hours, minutes, 0, 0);
-    return tomorrow;
-  })()
+    const scheduledTime = (() => {
+      const [hours, minutes] = scheduleTime.split(':').map(Number)
+      const tomorrow = new Date()
+      tomorrow.setDate(tomorrow.getDate() + 1)
+      tomorrow.setHours(hours, minutes, 0, 0)
+      return tomorrow
+    })()
 
-    const now = new Date();
+    const now = new Date()
 
     if (scheduledTime <= now) {
       toast.error('Selected time has already passed')
@@ -339,20 +341,20 @@ function App() {
       officer.badgeNumber?.toLowerCase().includes(searchTerm.toLowerCase()),
   )
 
-// Helper to format Supabase time (HH:MM:SS) to 12-hour format - times stored as UTC, add 8 for PH display
+  // Helper to format Supabase time (HH:MM:SS) to 12-hour format - times stored as UTC, add 8 for PH display
   const formatTime = (timeStr: string | null | undefined) => {
-    if (!timeStr) return '';
-    const [hours, minutes] = timeStr.split(':').map(Number);
+    if (!timeStr) return ''
+    const [hours, minutes] = timeStr.split(':').map(Number)
     // Add 8 hours for Philippine timezone
-    let adjustedHours = (hours + 8) % 24;
-    const hour12 = adjustedHours % 12 || 12;
-    const ampm = adjustedHours >= 12 ? 'PM' : 'AM';
-    return `${hour12}:${minutes.toString().padStart(2, '0')} ${ampm}`;
+    let adjustedHours = (hours + 8) % 24
+    const hour12 = adjustedHours % 12 || 12
+    const ampm = adjustedHours >= 12 ? 'PM' : 'AM'
+    return `${hour12}:${minutes.toString().padStart(2, '0')} ${ampm}`
   }
 
   // Get countdown for a scheduled task
   const getCountdown = (scheduledTime: string) => {
-    const now = new Date();
+    const now = new Date()
     const scheduled = new Date(scheduledTime)
     const diff = scheduled.getTime() - now.getTime()
 
@@ -389,22 +391,23 @@ function App() {
       {/* Header */}
       <header className="bg-gradient-to-r from-blue-900 via-blue-800 to-blue-900 text-white shadow-lg">
         <div className="container mx-auto px-4 py-6">
-            <div className="flex items-center justify-center gap-4">
-              <img
-                src="/pnp_logo_nobg.png"
-                alt="Philippine National Police"
-                className="h-16 md:h-20 object-contain"
-              />
-              <div className="text-center">
-                <h1 className="text-2xl md:text-3xl font-bold tracking-wide">BCPS-1</h1>
-                <p className="text-blue-200 text-sm md:text-base">Attendance Tracker</p>
-              </div>
-              <img
-                src="/butuan_ps1_nobg.png"
-                alt="Butuan City Police Station 1"
-                className="h-16 md:h-20 object-contain"
-              />
+          <div className="flex items-center justify-center gap-4">
+            <img
+              src="/pnp_logo_nobg.png"
+              alt="Philippine National Police"
+              className="h-16 md:h-20 object-contain"
+            />
+            <div className="text-center">
+              <h1 className="text-2xl md:text-3xl font-bold tracking-wide">
+                BCPS-1 Traffic Section Attendance Tracker
+              </h1>
             </div>
+            <img
+              src="/butuan_ps1_nobg.png"
+              alt="Butuan City Police Station 1"
+              className="h-16 md:h-20 object-contain"
+            />
+          </div>
         </div>
       </header>
 
@@ -748,25 +751,25 @@ function App() {
                     const hasOfficers = officersOnDuty.length > 0
 
                     return (
-                        <button
-                          key={idx}
-                          onClick={() => handleDateClick(day)}
-                          className={`
+                      <button
+                        key={idx}
+                        onClick={() => handleDateClick(day)}
+                        className={`
                             aspect-square p-2 rounded-lg border transition-all hover:scale-105
                             ${isCurrentMonth ? 'bg-white' : 'bg-gray-50 text-gray-400'}
                             ${isToday ? 'ring-2 ring-blue-500 border-blue-500' : 'border-gray-200'}
                             ${hasOfficers ? 'hover:bg-green-50 hover:border-green-300' : 'hover:bg-blue-50 hover:border-blue-300'}
                           `}
-                        >
-                          <div className="text-sm font-medium">{format(day, 'd')}</div>
-                          {hasOfficers && (
-                            <div className="mt-1">
-                              <Badge className="bg-green-500 text-white text-xs px-1.5 py-0">
-                                {officersOnDuty.length}
-                              </Badge>
-                            </div>
-                          )}
-                        </button>
+                      >
+                        <div className="text-sm font-medium">{format(day, 'd')}</div>
+                        {hasOfficers && (
+                          <div className="mt-1">
+                            <Badge className="bg-green-500 text-white text-xs px-1.5 py-0">
+                              {officersOnDuty.length}
+                            </Badge>
+                          </div>
+                        )}
+                      </button>
                     )
                   })}
                 </div>
@@ -817,15 +820,17 @@ function App() {
                 variant="outline"
                 className="ml-auto h-8"
                 onClick={() => {
-                  setDayDetailsOpen(false);
-                  setAssignDialogOpen(true);
+                  setDayDetailsOpen(false)
+                  setAssignDialogOpen(true)
                 }}
               >
                 <UserPlus className="w-4 h-4 mr-1" />
                 Add
               </Button>
             </DialogTitle>
-            <DialogDescription>Officers on duty for this day. Click + on calendar to assign.</DialogDescription>
+            <DialogDescription>
+              Officers on duty for this day. Click + on calendar to assign.
+            </DialogDescription>
           </DialogHeader>
 
           {selectedDate && (
@@ -844,24 +849,26 @@ function App() {
                   <div className="space-y-3">
                     {officersOnDuty.map((officer) => {
                       const dateStr = format(selectedDate, 'yyyy-MM-dd')
-                      
+
                       // Find duty record from Supabase or local history
                       let dutyRecord: { timeIn: string; timeOut: string | null } | undefined
                       let dutyRecordId: string | undefined
                       if (dutyRecords && dutyRecords.length > 0) {
-                        const sbRecord = dutyRecords.find(r => r.officer_id === officer.id && r.duty_date === dateStr)
+                        const sbRecord = dutyRecords.find(
+                          (r) => r.officer_id === officer.id && r.duty_date === dateStr,
+                        )
                         if (sbRecord) {
                           dutyRecordId = sbRecord.id
                           // Format the time strings to match local format
                           dutyRecord = {
                             timeIn: formatTime(sbRecord.time_in) || sbRecord.time_in,
-                            timeOut: formatTime(sbRecord.time_out) || sbRecord.time_out
+                            timeOut: formatTime(sbRecord.time_out) || sbRecord.time_out,
                           }
                         }
                       } else {
                         dutyRecord = officer.dutyHistory?.find((r) => r.date === dateStr)
                       }
-                      
+
                       return (
                         <div
                           key={officer.id}
@@ -870,7 +877,13 @@ function App() {
                           <div>
                             <div className="font-medium flex items-center gap-2">
                               {officer.name}
-                              <Badge className={officer.currentStatus === 'on-duty' ? 'bg-green-500 text-white text-xs' : 'bg-gray-400 text-white text-xs'}>
+                              <Badge
+                                className={
+                                  officer.currentStatus === 'on-duty'
+                                    ? 'bg-green-500 text-white text-xs'
+                                    : 'bg-gray-400 text-white text-xs'
+                                }
+                              >
                                 {officer.currentStatus === 'on-duty' ? 'On Duty' : 'Off Duty'}
                               </Badge>
                             </div>
@@ -888,20 +901,20 @@ function App() {
                               </div>
                             )}
                             {dutyRecord && (
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    if (dutyRecordId) {
-                                      setDeleteDutyDialog({ open: true, dutyRecordId });
-                                    }
-                                  }}
-                                  className="h-8 w-8 p-0 text-red-500 hover:text-red-700 hover:bg-red-50 flex-shrink-0"
-                                  title="Remove duty record"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  if (dutyRecordId) {
+                                    setDeleteDutyDialog({ open: true, dutyRecordId })
+                                  }
+                                }}
+                                className="h-8 w-8 p-0 text-red-500 hover:text-red-700 hover:bg-red-50 flex-shrink-0"
+                                title="Remove duty record"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
                             )}
                           </div>
                         </div>
@@ -939,49 +952,43 @@ function App() {
                 </SelectTrigger>
                 <SelectContent>
                   {(() => {
-                    const dateStr = selectedDate ? format(selectedDate, 'yyyy-MM-dd') : '';
+                    const dateStr = selectedDate ? format(selectedDate, 'yyyy-MM-dd') : ''
                     const officersOnDutyIds = new Set(
-                      getOfficersOnDutyForDate(selectedDate || new Date()).map(o => o.id)
-                    );
-                    const availableOfficers = officers.filter(o => !officersOnDutyIds.has(o.id));
-                    return availableOfficers.map(officer => (
+                      getOfficersOnDutyForDate(selectedDate || new Date()).map((o) => o.id),
+                    )
+                    const availableOfficers = officers.filter((o) => !officersOnDutyIds.has(o.id))
+                    return availableOfficers.map((officer) => (
                       <SelectItem key={officer.id} value={officer.id}>
                         {officer.name} ({officer.rank})
                       </SelectItem>
-                    ));
+                    ))
                   })()}
                 </SelectContent>
               </Select>
             </div>
-            </div>
-            <DialogFooter>
+          </div>
+          <DialogFooter>
             <Button variant="outline" onClick={() => setAssignDialogOpen(false)}>
               Cancel
             </Button>
-            <Button 
+            <Button
               onClick={async () => {
                 if (!selectedDate || !selectedOfficerId) {
-                  toast.error('Please select an officer');
-                  return;
+                  toast.error('Please select an officer')
+                  return
                 }
                 try {
-                  const dateStr = format(selectedDate, 'yyyy-MM-dd');
-                  console.log('Assigning officer:', selectedOfficerId, 'for date:', dateStr);
-                  await addDutyRecord(
-                    selectedOfficerId,
-                    dateStr,
-                    undefined,
-                    undefined,
-                    undefined
-                  );
-                  toast.success('Officer assigned to duty');
-                  setAssignDialogOpen(false);
+                  const dateStr = format(selectedDate, 'yyyy-MM-dd')
+                  console.log('Assigning officer:', selectedOfficerId, 'for date:', dateStr)
+                  await addDutyRecord(selectedOfficerId, dateStr, undefined, undefined, undefined)
+                  toast.success('Officer assigned to duty')
+                  setAssignDialogOpen(false)
                   // Reset form
-                  setSelectedOfficerId('');
-                  setNotes('');
+                  setSelectedOfficerId('')
+                  setNotes('')
                 } catch (error: any) {
-                  console.error('Assign error:', error);
-                  toast.error(error?.message || 'Failed to assign duty');
+                  console.error('Assign error:', error)
+                  toast.error(error?.message || 'Failed to assign duty')
                 }
               }}
               disabled={!selectedOfficerId || loading}
@@ -1045,7 +1052,10 @@ function App() {
       </Dialog>
 
       {/* Delete Duty Record Confirmation Dialog */}
-      <Dialog open={deleteDutyDialog.open} onOpenChange={() => setDeleteDutyDialog({ ...deleteDutyDialog, open: false })}>
+      <Dialog
+        open={deleteDutyDialog.open}
+        onOpenChange={() => setDeleteDutyDialog({ ...deleteDutyDialog, open: false })}
+      >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Confirm Remove Duty Record</DialogTitle>
@@ -1054,11 +1064,14 @@ function App() {
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => setDeleteDutyDialog({ ...deleteDutyDialog, open: false })}>
+            <Button
+              variant="outline"
+              onClick={() => setDeleteDutyDialog({ ...deleteDutyDialog, open: false })}
+            >
               Cancel
             </Button>
-            <Button 
-              variant="destructive" 
+            <Button
+              variant="destructive"
               onClick={async () => {
                 const success = await deleteDutyRecord(deleteDutyDialog.dutyRecordId)
                 setDeleteDutyDialog({ open: false, dutyRecordId: '' })
