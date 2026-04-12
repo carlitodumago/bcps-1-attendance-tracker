@@ -153,12 +153,11 @@ function App() {
 
       // Automatically schedule off-duty for tomorrow at 8:00 AM
       const tomorrow = (() => {
-        const now = new Date()
-        const phTime = new Date(now.toLocaleString('en-PH', { timeZone: 'Asia/Manila' }))
-        phTime.setDate(phTime.getDate() + 1)
-        phTime.setHours(8, 0, 0, 0)
-        return phTime
-      })()
+        const now = new Date();
+        now.setDate(now.getDate() + 1);
+        now.setHours(8, 0, 0, 0);
+        return now;
+      })();
 
       await scheduleTask(officerId, officer.name, 'off-duty', tomorrow)
 
@@ -174,6 +173,12 @@ function App() {
   const handleOffDuty = async (officerId: string) => {
     console.log('handleOffDuty called for:', officerId)
     try {
+      // Cancel any existing scheduled off-duty task before manual check-out
+      const existingTask = getTaskForOfficer(officerId)
+      if (existingTask && existingTask.scheduledStatus === 'off-duty') {
+        await cancelTask(existingTask.id)
+      }
+
       const result = await checkOutOfficer(officerId)
       console.log('checkOutOfficer result:', result)
       if (result) {
@@ -574,38 +579,39 @@ function App() {
                             </div>
                           </div>
                           <div className="flex gap-1 ml-2">
-                            {officer.currentStatus === 'off-duty' ? (
-                              <Button
-                                size="sm"
-                                onClick={() => handleOnDuty(officer.id)}
-                                className="bg-green-600 hover:bg-green-700 text-white h-7 px-2 text-xs"
-                              >
-                                <UserCheck className="w-3 h-3 mr-1" />
-                                On
-                              </Button>
-                            ) : (
-                              <>
-                                <Button
-                                  size="sm"
-                                  onClick={() => handleOffDuty(officer.id)}
-                                  variant="outline"
-                                  className="border-orange-400 text-orange-600 hover:bg-orange-50 h-7 px-2 text-xs"
-                                >
-                                  <UserX className="w-3 h-3 mr-1" />
-                                  Off
-                                </Button>
-                                <ScheduleOffDutyButton
-                                  officerId={officer.id}
-                                  officerName={officer.name}
-                                  currentStatus={officer.currentStatus}
-                                  scheduledTask={getTaskForOfficer(officer.id)}
-                                  onSchedule={scheduleTask}
-                                  onCancelSchedule={cancelTask}
-                                  getCountdown={getCountdown}
-                                  compact
-                                />
-                              </>
-                            )}
+                             {officer.currentStatus === 'off-duty' ? (
+                               <Button
+                                 size="sm"
+                                 onClick={() => handleOnDuty(officer.id)}
+                                 className="bg-green-600 hover:bg-green-700 text-white h-7 px-2 text-xs"
+                               >
+                                 <UserCheck className="w-3 h-3 mr-1" />
+                                 On
+                               </Button>
+                              ) : (
+                                <>
+                                  <Button
+                                    size="sm"
+                                    onClick={() => handleOffDuty(officer.id)}
+                                    variant="outline"
+                                    className="border-orange-400 text-orange-600 hover:bg-orange-50 h-7 px-2 text-xs"
+                                    title="Manual off-duty (will cancel any scheduled auto off-duty)"
+                                  >
+                                    <UserX className="w-3 h-3 mr-1" />
+                                    Off
+                                  </Button>
+                                  <ScheduleOffDutyButton
+                                    officerId={officer.id}
+                                    officerName={officer.name}
+                                    currentStatus={officer.currentStatus}
+                                    scheduledTask={getTaskForOfficer(officer.id)}
+                                    onSchedule={scheduleTask}
+                                    onCancelSchedule={cancelTask}
+                                    getCountdown={getCountdown}
+                                    compact
+                                  />
+                                </>
+                              )}
                             <Button
                               size="sm"
                               variant="ghost"
