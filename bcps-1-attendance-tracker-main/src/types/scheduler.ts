@@ -10,7 +10,7 @@ export interface ScheduledTask {
   officerName: string;
   scheduledStatus: ScheduledStatus;
   scheduledTime: string; // ISO 8601 timestamp
-  timezone: string; // IANA timezone identifier
+  timezone: string; // IANA timezone identifier (e.g., 'Asia/Manila')
   createdAt: string;
   executedAt?: string;
   cancelledAt?: string;

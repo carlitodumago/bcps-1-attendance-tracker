@@ -10,20 +10,21 @@ import { useSupabaseOfficers } from './use-supabase-officers';
 import { useSupabaseDutyRecords } from './use-supabase-duty-records';
 import { useSupabaseScheduledTasks } from './use-supabase-scheduled-tasks';
 import { useStatusScheduler } from './use-status-scheduler';
-// getFormattedCurrentTime - using local time
+// getFormattedCurrentTime - using Philippine Time via toLocaleString
 const getFormattedCurrentTime = (formatToken: string): string => {
   const now = new Date();
-
+  const phtTime = new Date(now.toLocaleString('en-PH', { timeZone: 'Asia/Manila' }));
+  
   const pad = (n: number) => n.toString().padStart(2, '0');
-
-  const hour12 = now.getHours() % 12 || 12;
-  const minutes = now.getMinutes();
-  const seconds = now.getSeconds();
-  const ampm = now.getHours() >= 12 ? 'PM' : 'AM';
-  const year = now.getFullYear();
-  const month = pad(now.getMonth() + 1);
-  const day = pad(now.getDate());
-
+  
+  const hour12 = phtTime.getHours() % 12 || 12;
+  const minutes = phtTime.getMinutes();
+  const seconds = phtTime.getSeconds();
+  const ampm = phtTime.getHours() >= 12 ? 'PM' : 'AM';
+  const year = phtTime.getFullYear();
+  const month = pad(phtTime.getMonth() + 1);
+  const day = pad(phtTime.getDate());
+  
   return formatToken
     .replace(/hh/g, pad(hour12))
     .replace(/mm/g, pad(minutes))
@@ -385,9 +386,11 @@ export function useUnifiedData(onTaskExecute?: (task: ScheduledTask) => void): U
   }, [localOfficers]);
 
   // Check in officer with optimistic update
-  const checkInOfficer = useCallback(async (officerId: string) => {
+const checkInOfficer = useCallback(async (officerId: string) => {
     const now = new Date();
-    const timeIn24 = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+    const phtTime = new Date(now.toLocaleString('en-PH', { timeZone: 'Asia/Manila' }));
+    const utcTime = new Date(phtTime.getTime() - (8 * 3600000));
+    const timeIn24 = `${utcTime.getHours().toString().padStart(2, '0')}:${utcTime.getMinutes().toString().padStart(2, '0')}:${utcTime.getSeconds().toString().padStart(2, '0')}`;
     const today = getFormattedCurrentTime('yyyy-MM-dd');
 
     // Store original state for potential rollback (using refs to get latest)
@@ -430,7 +433,9 @@ export function useUnifiedData(onTaskExecute?: (task: ScheduledTask) => void): U
   // Check out officer with optimistic update
   const checkOutOfficer = useCallback(async (officerId: string): Promise<boolean> => {
     const now = new Date();
-    const timeOut24 = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+    const phtTime = new Date(now.toLocaleString('en-PH', { timeZone: 'Asia/Manila' }));
+    const utcTime = new Date(phtTime.getTime() - (8 * 3600000));
+    const timeOut24 = `${utcTime.getHours().toString().padStart(2, '0')}:${utcTime.getMinutes().toString().padStart(2, '0')}:${utcTime.getSeconds().toString().padStart(2, '0')}`;
 
     // Store original state for potential rollback (using refs to get latest)
     const originalOfficers = supabaseAvailable ? [...syncedOfficersRef.current] : [...localOfficersRef.current];

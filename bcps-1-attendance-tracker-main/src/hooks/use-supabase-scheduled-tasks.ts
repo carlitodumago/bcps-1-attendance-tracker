@@ -7,7 +7,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 const getPhTime = (): Date => {
-  return new Date();
+  const now = new Date();
+  return new Date(now.toLocaleString('en-PH', { timeZone: 'Asia/Manila' }));
 };
 import type { ScheduledTaskDB } from '../types/database';
 import type { ScheduledTask, ScheduledStatus, CountdownInfo } from '../types/scheduler';
@@ -274,7 +275,7 @@ export function useSupabaseScheduledTasks(retryConfig: RetryConfig = DEFAULT_RET
           officer_id: officerId,
           scheduled_status: scheduledStatus,
           scheduled_time: scheduledTime.toISOString(),
-          timezone: 'UTC',
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
           status: 'pending' as const,
         };
 
@@ -428,6 +429,7 @@ export function useSupabaseScheduledTasks(retryConfig: RetryConfig = DEFAULT_RET
   // Get Countdown for Scheduled Time
   // ============================================================================
   const getCountdown = useCallback((scheduledTime: string): CountdownInfo => {
+    // Current time in Asia/Manila for consistent comparison
     const now = getPhTime();
     const scheduled = new Date(scheduledTime);
     const diff = scheduled.getTime() - now.getTime();

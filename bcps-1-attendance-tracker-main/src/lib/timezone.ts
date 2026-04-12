@@ -1,9 +1,15 @@
 // ============================================================================
-// Timezone Utility
+// Philippine Time (PHT) Timezone Utility
+// All times in this application are stored and displayed in PHT (UTC+8)
 // ============================================================================
 
 /**
- * UTC offset in hours
+ * Philippine Time Zone identifier
+ */
+export const PHT_TIMEZONE = 'Asia/Manila';
+
+/**
+ * PHT UTC offset in hours
  */
 export const PHT_OFFSET_HOURS = 8;
 
@@ -46,11 +52,12 @@ export const formatTimeInPHT = (date: Date): string => {
 export const formatTimeInPHT12Hour = (date: Date): string => {
   // Don't call convertToPHT here - the date is already in PHT
   // Calling convertToPHT would cause double conversion and show wrong times
-  return date.toLocaleTimeString([], {
+  return date.toLocaleTimeString('en-PH', {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
     hour12: true,
+    timeZone: PHT_TIMEZONE,
   });
 };
 

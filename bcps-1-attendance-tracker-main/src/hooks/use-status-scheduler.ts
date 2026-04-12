@@ -10,7 +10,8 @@ import type {
 } from '../types/scheduler';
 import { SCHEDULER_STORAGE_KEY } from '../types/scheduler';
 const getPhTime = (): Date => {
-  return new Date();
+  const now = new Date();
+  return new Date(now.toLocaleString('en-PH', { timeZone: 'Asia/Manila' }));
 };
 
 interface UseStatusSchedulerReturn {
@@ -54,8 +55,9 @@ export function useStatusScheduler(
 
   // Check for tasks that need to be executed
   const checkAndExecuteTasks = useCallback(async () => {
+    // Current time in Asia/Manila for comparison
     const now = getPhTime();
-
+    
     for (const task of tasks) {
       if (task.status === 'pending') {
         const scheduledTime = new Date(task.scheduledTime);
@@ -131,7 +133,7 @@ export function useStatusScheduler(
       officerName,
       scheduledStatus,
       scheduledTime: scheduledTime.toISOString(),
-      timezone: 'UTC',
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       createdAt: new Date().toISOString(),
       status: 'pending'
     };

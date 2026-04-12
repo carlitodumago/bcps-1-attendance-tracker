@@ -21,7 +21,8 @@ import { toast } from 'sonner';
 import type { ScheduledTask, CountdownInfo } from '../types/scheduler';
 import { DEFAULT_TIME_OPTIONS } from '../types/scheduler';
 const getPhTime = (): Date => {
-  return new Date();
+  const now = new Date();
+  return new Date(now.toLocaleString('en-PH', { timeZone: 'Asia/Manila' }));
 };
 
 const getTomorrowAtTime = (timeStr: string): Date => {
@@ -86,7 +87,8 @@ export function ScheduleOffDutyButton({
   // Handle scheduling the off-duty
   const handleSchedule = useCallback(() => {
     const scheduledTime = getTomorrowAtTime(selectedTime);
-
+    
+    // Current time in Asia/Manila for comparison
     const nowInPh = getPhTime();
 
     // Check if the time is in the past (for edge cases)
