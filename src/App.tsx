@@ -36,9 +36,13 @@ import {
   CalendarDays,
   Clock,
   Timer,
+  Download,
+  Eye,
+  EyeOff,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Toaster } from '@/components/ui/sonner'
+import { generateAttendanceExcel } from './lib/excelExport'
 import {
   format,
   startOfMonth,
@@ -95,6 +99,9 @@ function App() {
   const [rank, setRank] = useState('')
   const [badgeNumber, setBadgeNumber] = useState('')
   const [unit, setUnit] = useState('')
+  const [adminPassword, setAdminPassword] = useState('')
+  const [adminVerified, setAdminVerified] = useState(false)
+  const [showPassword, setShowPassword] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
   const [editingOfficer, setEditingOfficer] = useState<EditingOfficer | null>(null)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
@@ -412,6 +419,25 @@ function App() {
       </header>
 
       <main className="container mx-auto px-4 py-8 max-w-7xl">
+        {/* Excel Export Button */}
+        <div className="flex justify-end mb-4">
+          <Button
+            onClick={() => {
+              try {
+                const result = generateAttendanceExcel(officers, dutyRecords);
+                toast.success(`Excel report generated!\n${result.recordCount} duty records exported`);
+              } catch (error) {
+                console.error('Excel export error:', error);
+                toast.error('Failed to generate Excel report');
+              }
+            }}
+            className="bg-green-600 hover:bg-green-700 text-white"
+          >
+            <Download className="w-4 h-4 mr-2" />
+            Download Excel
+          </Button>
+        </div>
+
         {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
           <Card className="bg-gradient-to-r from-green-500 to-green-600 text-white border-0 shadow-lg">
@@ -463,8 +489,56 @@ function App() {
               />
             </div>
 
+            {/* Admin Access */}
+            {!adminVerified && (
+              <Card className="border-2 border-red-100 shadow-xl bg-white/80 backdrop-blur">
+                <CardHeader className="bg-gradient-to-r from-red-50 to-white border-b border-red-100 py-3">
+                  <CardTitle className="flex items-center gap-2 text-red-900 text-base">
+                    <Shield className="w-4 h-4" />
+                    Admin Access Required
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="p-4">
+                  <div className="space-y-3">
+                    <label className="text-xs font-medium text-gray-700">Enter Admin Password to Register Officers</label>
+                    <div className="relative">
+                      <Input
+                        type={showPassword ? "text" : "password"}
+                        placeholder="Enter password"
+                        value={adminPassword}
+                        onChange={(e) => setAdminPassword(e.target.value)}
+                        className="border-red-200 h-9 text-sm pr-10"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                      >
+                        {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                    <Button
+                      onClick={() => {
+                        if (adminPassword === 'bcps1') {
+                          setAdminVerified(true)
+                          toast.success('Admin access granted')
+                        } else {
+                          toast.error('Incorrect password')
+                        }
+                      }}
+                      size="sm"
+                      className="w-full bg-red-600 hover:bg-red-700 text-white"
+                    >
+                      Submit Password
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
             {/* Add Officer Card */}
-            <Card className="border-2 border-blue-100 shadow-xl bg-white/80 backdrop-blur">
+            {adminVerified && (
+              <Card className="border-2 border-blue-100 shadow-xl bg-white/80 backdrop-blur">
               <CardHeader className="bg-gradient-to-r from-blue-50 to-white border-b border-blue-100 py-3">
                 <CardTitle className="flex items-center gap-2 text-blue-900 text-base">
                   <UserPlus className="w-4 h-4" />
@@ -490,22 +564,24 @@ function App() {
                       onChange={(e) => setRank(e.target.value)}
                       className="border-blue-200 h-9 text-sm"
                     />
+                   </div>
+                   <div className="space-y-1">
+                    <label className="text-xs font-medium text-gray-700">Unit</label>
+                    <Input
+                      placeholder="e.g., Station 1"
+                      value={unit}
+                      onChange={(e) => setUnit(e.target.value)}
+                      className="border-blue-200 h-9 text-sm"
+                    />
                   </div>
+                </div>
+                <div className="mt-3">
                   <div className="space-y-1">
                     <label className="text-xs font-medium text-gray-700">Badge #</label>
                     <Input
                       placeholder="e.g., 12345"
                       value={badgeNumber}
                       onChange={(e) => setBadgeNumber(e.target.value)}
-                      className="border-blue-200 h-9 text-sm"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-xs font-medium text-gray-700">Unit</label>
-                    <Input
-                      placeholder="e.g., Station 1"
-                      value={unit}
-                      onChange={(e) => setUnit(e.target.value)}
                       className="border-blue-200 h-9 text-sm"
                     />
                   </div>
@@ -523,6 +599,7 @@ function App() {
                 </div>
               </CardContent>
             </Card>
+            )}
 
             {/* Officer List */}
             <Card className="border-2 border-gray-100 shadow-xl bg-white/80 backdrop-blur">
@@ -802,7 +879,7 @@ function App() {
             </span>
             <span className="flex items-center gap-1">
               <CalendarIcon className="w-4 h-4" />
-              {format(new Date(), 'MMMM d, yyyy')}
+              Duty Date: {format(new Date(), 'MMMM d, yyyy')}
             </span>
           </div>
         </div>
