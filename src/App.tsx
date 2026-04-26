@@ -491,9 +491,9 @@ function App() {
 
             {/* Admin Access */}
             {!adminVerified && (
-              <Card className="border-2 border-red-100 shadow-xl bg-white/80 backdrop-blur">
-                <CardHeader className="bg-gradient-to-r from-red-50 to-white border-b border-red-100 py-3">
-                  <CardTitle className="flex items-center gap-2 text-red-900 text-base">
+              <Card className="border-2 border-blue-200 shadow-xl bg-white">
+                <CardHeader className="bg-blue-50 border-b border-blue-200 py-3">
+                  <CardTitle className="flex items-center gap-2 text-blue-900 text-base">
                     <Shield className="w-4 h-4" />
                     Admin Access Required
                   </CardTitle>
@@ -523,11 +523,12 @@ function App() {
                           setAdminVerified(true)
                           toast.success('Admin access granted')
                         } else {
+                          setAdminPassword('')
                           toast.error('Incorrect password')
                         }
                       }}
                       size="sm"
-                      className="w-full bg-red-600 hover:bg-red-700 text-white"
+                      className="w-full bg-blue-600 hover:bg-blue-700 text-white"
                     >
                       Submit Password
                     </Button>
