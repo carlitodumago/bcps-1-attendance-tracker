@@ -75,6 +75,7 @@ interface UseUnifiedDataReturn {
   checkInOfficer: (officerId: string) => Promise<void>;
   checkOutOfficer: (officerId: string) => Promise<boolean>;
   addDutyRecord: (officerId: string, dutyDate: string, timeIn?: string, timeOut?: string | null, notes?: string) => Promise<void>;
+  updateDutyRecord: (id: string, record: DutyRecordUpdate) => Promise<DutyRecord | null>;
   deleteDutyRecord: (id: string) => Promise<boolean>; 
 
   // Scheduling operations
@@ -532,8 +533,9 @@ const checkInOfficer = useCallback(async (officerId: string) => {
     if (supabaseAvailable) {
       await refreshOfficers();
       await fetchDbTasks();
+      await dutyRecordsHook.refreshData();
     }
-  }, [supabaseAvailable, refreshOfficers, fetchDbTasks]);
+  }, [supabaseAvailable, refreshOfficers, fetchDbTasks, dutyRecordsHook.refreshData]);
 
     return {
     officers,
@@ -584,6 +586,7 @@ const checkInOfficer = useCallback(async (officerId: string) => {
     }, [supabaseAvailable, dutyRecordsHook.addDutyRecord]),
 
     deleteDutyRecord: supabaseAvailable ? dutyRecordsHook.deleteDutyRecord : (() => Promise.resolve(false)),
+    updateDutyRecord: supabaseAvailable ? dutyRecordsHook.updateDutyRecord : (() => Promise.resolve(null)),
     scheduleTask,
     cancelTask,
     getTaskForOfficer,

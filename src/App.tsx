@@ -80,6 +80,7 @@ function App() {
     officers,
     dutyRecords,
     deleteDutyRecord,
+    updateDutyRecord,
     addDutyRecord,
     loading,
     realtimeStatus,
@@ -109,6 +110,9 @@ function App() {
   const [deleteDutyDialog, setDeleteDutyDialog] = useState<{ open: boolean; dutyRecordId: string }>(
     { open: false, dutyRecordId: '' },
   )
+  const [editDutyDialog, setEditDutyDialog] = useState<{ open: boolean; dutyRecordId: string; currentOfficerId: string }>(
+    { open: false, dutyRecordId: '', currentOfficerId: '' },
+  )
 
   // Calendar state
   const [currentMonth, setCurrentMonth] = useState(new Date())
@@ -116,7 +120,6 @@ function App() {
   const [dayDetailsOpen, setDayDetailsOpen] = useState(false)
   const [assignDialogOpen, setAssignDialogOpen] = useState(false)
   const [selectedOfficerId, setSelectedOfficerId] = useState<string>('')
-  const [notes, setNotes] = useState('')
 
   // Schedule Off-Duty state
   const [scheduleTime, setScheduleTime] = useState<string>('08:00')
@@ -155,6 +158,11 @@ function App() {
     const officer = officers.find((o) => o.id === officerId)
     if (!officer) return
 
+    if (officer.currentStatus === 'on-duty') {
+      toast.info(`${officer.name} is already ON DUTY`)
+      return
+    }
+
     try {
       await checkInOfficer(officerId)
 
@@ -179,12 +187,20 @@ function App() {
 
   // Handle off duty
   const handleOffDuty = async (officerId: string) => {
+    const officer = officers.find((o) => o.id === officerId)
+    if (!officer) return
+
+    if (officer.currentStatus === 'off-duty') {
+      toast.info(`${officer.name} is already OFF DUTY`)
+      return
+    }
+
     console.log('handleOffDuty called for:', officerId)
     try {
       const result = await checkOutOfficer(officerId)
       console.log('checkOutOfficer result:', result)
       if (result) {
-        toast.success('Officer is now OFF DUTY')
+        toast.success(`${officer.name} is now OFF DUTY`)
       } else {
         toast.error('Failed to check out officer')
       }
@@ -291,12 +307,12 @@ function App() {
 
   const handleDateClick = (date: Date) => {
     setSelectedDate(date)
-    setDayDetailsOpen(true)
-  }
-
-  const handleAssignClick = (date: Date) => {
-    setSelectedDate(date)
-    setAssignDialogOpen(true)
+    const officersOnDuty = getOfficersOnDutyForDate(date)
+    if (officersOnDuty.length > 0) {
+      setDayDetailsOpen(true)
+    } else {
+      setAssignDialogOpen(true)
+    }
   }
 
   const onDutyOfficers = officers.filter((o) => o.currentStatus === 'on-duty')
@@ -353,7 +369,7 @@ function App() {
     if (!timeStr) return ''
     const [hours, minutes] = timeStr.split(':').map(Number)
     // Add 8 hours for Philippine timezone
-    let adjustedHours = (hours + 8) % 24
+    const adjustedHours = (hours + 8) % 24
     const hour12 = adjustedHours % 12 || 12
     const ampm = adjustedHours >= 12 ? 'PM' : 'AM'
     return `${hour12}:${minutes.toString().padStart(2, '0')} ${ampm}`
@@ -419,27 +435,8 @@ function App() {
       </header>
 
       <main className="container mx-auto px-4 py-8 max-w-7xl">
-        {/* Excel Export Button */}
-        <div className="flex justify-end mb-4">
-          <Button
-            onClick={() => {
-              try {
-                const result = generateAttendanceExcel(officers, dutyRecords);
-                toast.success(`Excel report generated!\n${result.recordCount} duty records exported`);
-              } catch (error) {
-                console.error('Excel export error:', error);
-                toast.error('Failed to generate Excel report');
-              }
-            }}
-            className="bg-green-600 hover:bg-green-700 text-white"
-          >
-            <Download className="w-4 h-4 mr-2" />
-            Download Excel
-          </Button>
-        </div>
-
         {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
           <Card className="bg-gradient-to-r from-green-500 to-green-600 text-white border-0 shadow-lg">
             <CardContent className="p-6 flex items-center justify-between">
               <div>
@@ -462,18 +459,38 @@ function App() {
               </div>
             </CardContent>
           </Card>
-          <Card className="bg-gradient-to-r from-blue-500 to-blue-600 text-white border-0 shadow-lg">
-            <CardContent className="p-6 flex items-center justify-between">
-              <div>
-                <p className="text-blue-100 text-sm font-medium">TOTAL OFFICERS</p>
-                <p className="text-4xl font-bold">{officers.length}</p>
-              </div>
-              <div className="bg-white/20 p-4 rounded-full">
-                <Users className="w-8 h-8" />
-              </div>
-            </CardContent>
-          </Card>
         </div>
+
+        {/* Excel Export Button */}
+        <div className="flex justify-end mb-4">
+          <Button
+            onClick={() => {
+              try {
+                const result = generateAttendanceExcel(officers, dutyRecords);
+                toast.success(`Excel report generated!\n${result.recordCount} duty records exported`);
+              } catch (error) {
+                console.error('Excel export error:', error);
+                toast.error('Failed to generate Excel report');
+              }
+            }}
+            className="bg-green-600 hover:bg-green-700 text-white"
+          >
+            <Download className="w-4 h-4 mr-2" />
+            Export to Excel
+          </Button>
+        </div>
+
+        <Card className="bg-gradient-to-r from-blue-500 to-blue-600 text-white border-0 shadow-lg">
+          <CardContent className="p-6 flex items-center justify-between">
+            <div>
+              <p className="text-blue-100 text-sm font-medium">TOTAL OFFICERS</p>
+              <p className="text-4xl font-bold">{officers.length}</p>
+            </div>
+            <div className="bg-white/20 p-4 rounded-full">
+              <Users className="w-8 h-8" />
+            </div>
+          </CardContent>
+        </Card>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           {/* Left Column - Officer Management */}
@@ -651,56 +668,53 @@ function App() {
                               {officer.unit && `• ${officer.unit}`}
                             </div>
                           </div>
-                          <div className="flex gap-1 ml-2">
-                            {officer.currentStatus === 'off-duty' ? (
-                              <Button
-                                size="sm"
-                                onClick={() => handleOnDuty(officer.id)}
-                                className="bg-green-600 hover:bg-green-700 text-white h-7 px-2 text-xs"
-                              >
-                                <UserCheck className="w-3 h-3 mr-1" />
-                                On
-                              </Button>
-                            ) : (
-                              <>
-                                <Button
-                                  size="sm"
-                                  onClick={() => handleOffDuty(officer.id)}
-                                  variant="outline"
-                                  className="border-orange-400 text-orange-600 hover:bg-orange-50 h-7 px-2 text-xs"
-                                >
-                                  <UserX className="w-3 h-3 mr-1" />
-                                  Off
-                                </Button>
-                                <ScheduleOffDutyButton
-                                  officerId={officer.id}
-                                  officerName={officer.name}
-                                  currentStatus={officer.currentStatus}
-                                  scheduledTask={getTaskForOfficer(officer.id)}
-                                  onSchedule={scheduleTask}
-                                  onCancelSchedule={cancelTask}
-                                  getCountdown={getCountdown}
-                                  compact
-                                />
-                              </>
-                            )}
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => handleEdit(officer)}
-                              className="text-blue-600 hover:bg-blue-50 h-7 w-7 p-0"
-                            >
-                              <Edit2 className="w-3 h-3" />
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => handleDelete(officer.id)}
-                              className="text-red-600 hover:bg-red-50 h-7 w-7 p-0"
-                            >
-                              <Trash2 className="w-3 h-3" />
-                            </Button>
-                          </div>
+                           <div className="flex gap-1 ml-2">
+                             <Button
+                               size="sm"
+                               onClick={() => handleOnDuty(officer.id)}
+                               className="bg-green-600 hover:bg-green-700 text-white h-7 px-2 text-xs"
+                             >
+                               <UserCheck className="w-3 h-3 mr-1" />
+                               On
+                             </Button>
+                             <Button
+                               size="sm"
+                               onClick={() => handleOffDuty(officer.id)}
+                               variant="outline"
+                               className="border-orange-400 text-orange-600 hover:bg-orange-50 h-7 px-2 text-xs"
+                             >
+                               <UserX className="w-3 h-3 mr-1" />
+                               Off
+                             </Button>
+                             {officer.currentStatus === 'on-duty' && (
+                               <ScheduleOffDutyButton
+                                 officerId={officer.id}
+                                 officerName={officer.name}
+                                 currentStatus={officer.currentStatus}
+                                 scheduledTask={getTaskForOfficer(officer.id)}
+                                 onSchedule={scheduleTask}
+                                 onCancelSchedule={cancelTask}
+                                 getCountdown={getCountdown}
+                                 compact
+                               />
+                             )}
+                             <Button
+                               size="sm"
+                               variant="ghost"
+                               onClick={() => handleEdit(officer)}
+                               className="text-blue-600 hover:bg-blue-50 h-7 w-7 p-0"
+                             >
+                               <Edit2 className="w-3 h-3" />
+                             </Button>
+                             <Button
+                               size="sm"
+                               variant="ghost"
+                               onClick={() => handleDelete(officer.id)}
+                               className="text-red-600 hover:bg-red-50 h-7 w-7 p-0"
+                             >
+                               <Trash2 className="w-3 h-3" />
+                             </Button>
+                           </div>
                         </div>
                       </div>
                     ))}
@@ -833,20 +847,27 @@ function App() {
                         key={idx}
                         onClick={() => handleDateClick(day)}
                         className={`
-                            aspect-square p-2 rounded-lg border transition-all hover:scale-105
+                            relative aspect-square p-2 rounded-lg border transition-all hover:scale-105
                             ${isCurrentMonth ? 'bg-white' : 'bg-gray-50 text-gray-400'}
                             ${isToday ? 'ring-2 ring-blue-500 border-blue-500' : 'border-gray-200'}
                             ${hasOfficers ? 'hover:bg-green-50 hover:border-green-300' : 'hover:bg-blue-50 hover:border-blue-300'}
                           `}
                       >
-                        <div className="text-sm font-medium">{format(day, 'd')}</div>
-                        {hasOfficers && (
-                          <div className="mt-1">
-                            <Badge className="bg-green-500 text-white text-xs px-1.5 py-0">
-                              {officersOnDuty.length}
-                            </Badge>
-                          </div>
-                        )}
+                        <div className="flex flex-col items-center h-full">
+                          <div className="text-sm font-medium">{format(day, 'd')}</div>
+                          {hasOfficers && (
+                            <>
+                              <div className="mt-1">
+                                <Badge className="bg-green-500 text-white text-xs px-1.5 py-0">
+                                  {officersOnDuty.length}
+                                </Badge>
+                              </div>
+                               <div className="mt-1 flex justify-center">
+                                 <div className="w-4 h-4 bg-green-500 rounded-full border-2 border-white shadow-sm"></div>
+                               </div>
+                            </>
+                          )}
+                        </div>
                       </button>
                     )
                   })}
@@ -854,7 +875,7 @@ function App() {
 
                 <div className="mt-4 flex items-center gap-4 text-sm text-gray-600">
                   <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 bg-green-500 rounded-full"></div>
+                    <div className="w-4 h-4 bg-green-500 rounded-full border-2 border-white shadow-sm"></div>
                     <span>Has officers on duty</span>
                   </div>
                   <div className="flex items-center gap-2">
@@ -972,28 +993,44 @@ function App() {
                             <div className="text-xs text-gray-500">{officer.unit}</div>
                           </div>
                           <div className="text-right flex items-center gap-1">
-                            {dutyRecord && (
-                              <div className="text-green-700 flex items-center gap-1">
-                                <Clock className="w-3 h-3" />
-                                Checked In
-                              </div>
-                            )}
-                            {dutyRecord && (
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  if (dutyRecordId) {
-                                    setDeleteDutyDialog({ open: true, dutyRecordId })
-                                  }
-                                }}
-                                className="h-8 w-8 p-0 text-red-500 hover:text-red-700 hover:bg-red-50 flex-shrink-0"
-                                title="Remove duty record"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </Button>
-                            )}
+                             {dutyRecord && (
+                               <div className="text-green-700 flex items-center gap-1">
+                                 <Clock className="w-3 h-3" />
+                                 Checked In
+                               </div>
+                             )}
+                             {dutyRecord && (
+                               <>
+                                 <Button
+                                   size="sm"
+                                   variant="ghost"
+                                   onClick={(e) => {
+                                     e.stopPropagation()
+                                     if (dutyRecordId) {
+                                       setEditDutyDialog({ open: true, dutyRecordId, currentOfficerId: officer.id })
+                                     }
+                                   }}
+                                   className="h-8 w-8 p-0 text-blue-500 hover:text-blue-700 hover:bg-blue-50 flex-shrink-0"
+                                   title="Edit assignment"
+                                 >
+                                   <Edit2 className="w-4 h-4" />
+                                 </Button>
+                                 <Button
+                                   size="sm"
+                                   variant="ghost"
+                                   onClick={(e) => {
+                                     e.stopPropagation()
+                                     if (dutyRecordId) {
+                                       setDeleteDutyDialog({ open: true, dutyRecordId })
+                                     }
+                                   }}
+                                   className="h-8 w-8 p-0 text-red-500 hover:text-red-700 hover:bg-red-50 flex-shrink-0"
+                                   title="Remove duty record"
+                                 >
+                                   <Trash2 className="w-4 h-4" />
+                                 </Button>
+                               </>
+                             )}
                           </div>
                         </div>
                       )
@@ -1030,7 +1067,6 @@ function App() {
                 </SelectTrigger>
                 <SelectContent>
                   {(() => {
-                    const dateStr = selectedDate ? format(selectedDate, 'yyyy-MM-dd') : ''
                     const officersOnDutyIds = new Set(
                       getOfficersOnDutyForDate(selectedDate || new Date()).map((o) => o.id),
                     )
@@ -1058,20 +1094,80 @@ function App() {
                 try {
                   const dateStr = format(selectedDate, 'yyyy-MM-dd')
                   console.log('Assigning officer:', selectedOfficerId, 'for date:', dateStr)
-                  await addDutyRecord(selectedOfficerId, dateStr, undefined, undefined, undefined)
-                  toast.success('Officer assigned to duty')
+
+                  // Set timeIn if assigning to today
+                  const now = new Date()
+                  const phTime = new Date(now.toLocaleString('en-PH', { timeZone: 'Asia/Manila' }))
+                  const todayStr = format(phTime, 'yyyy-MM-dd')
+                  const timeIn = dateStr === todayStr ? format(phTime, 'HH:mm:ss') : undefined
+
+                   await addDutyRecord(selectedOfficerId, dateStr, timeIn, undefined, undefined)
+                   toast.success('Officer assigned to duty')
                   setAssignDialogOpen(false)
                   // Reset form
                   setSelectedOfficerId('')
-                  setNotes('')
-                } catch (error: any) {
+                } catch (error: unknown) {
                   console.error('Assign error:', error)
-                  toast.error(error?.message || 'Failed to assign duty')
+                  toast.error(error instanceof Error ? error.message : 'Failed to assign duty')
                 }
               }}
               disabled={!selectedOfficerId || loading}
             >
               Assign Duty
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Duty Assignment Dialog */}
+      <Dialog open={editDutyDialog.open} onOpenChange={() => setEditDutyDialog({ ...editDutyDialog, open: false })}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit Officer Assignment</DialogTitle>
+            <DialogDescription>
+              Change the officer assigned to {selectedDate && format(selectedDate!, 'MMMM d, yyyy')}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Select New Officer</label>
+              <Select value={selectedOfficerId} onValueChange={setSelectedOfficerId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select officer" />
+                </SelectTrigger>
+                <SelectContent>
+                  {officers.map((officer) => (
+                    <SelectItem key={officer.id} value={officer.id}>
+                      {officer.name} ({officer.rank})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditDutyDialog({ ...editDutyDialog, open: false })}>
+              Cancel
+            </Button>
+            <Button
+              onClick={async () => {
+                if (!selectedOfficerId) {
+                  toast.error('Please select an officer')
+                  return
+                }
+                try {
+                   await updateDutyRecord(editDutyDialog.dutyRecordId, { officer_id: selectedOfficerId })
+                   toast.success('Officer assignment updated')
+                  setEditDutyDialog({ open: false, dutyRecordId: '', currentOfficerId: '' })
+                  setSelectedOfficerId('')
+                } catch (error: unknown) {
+                  console.error('Edit error:', error)
+                  toast.error(error instanceof Error ? error.message : 'Failed to update assignment')
+                }
+              }}
+              disabled={!selectedOfficerId || loading}
+            >
+              Update Assignment
             </Button>
           </DialogFooter>
         </DialogContent>

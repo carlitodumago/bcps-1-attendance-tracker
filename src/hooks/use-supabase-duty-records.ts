@@ -477,13 +477,37 @@ export function useSupabaseDutyRecords(retryConfig: RetryConfig = DEFAULT_RETRY_
       }
 
       await fetchDutyRecords();
+
+      // Ensure officer status is updated to off-duty
+      try {
+        await supabase
+          .from('officers')
+          .update({ current_status: 'off-duty' })
+          .eq('id', officerId);
+      } catch (statusError) {
+        console.warn('Failed to update officer status, but checkout succeeded:', statusError);
+      }
+
       console.log('=== checkOutOfficer SUCCESS ===');
       return true;
     } catch (err) {
       console.error('=== checkOutOfficer ERROR ===', err);
       const errorMsg = parseError(err);
-      setError(errorMsg);
-      return false;
+
+      // Even if checkout failed, try to update officer status
+      try {
+        await supabase
+          .from('officers')
+          .update({ current_status: 'off-duty' })
+          .eq('id', officerId);
+        console.log('Officer status updated to off-duty despite duty record error');
+        setError(`${errorMsg} - Officer status updated locally`);
+        return true;
+      } catch (statusError) {
+        console.error('Failed to update officer status:', statusError);
+        setError(errorMsg);
+        return false;
+      }
     } finally {
       setLoading(false);
     }
