@@ -33,6 +33,8 @@ import {
   Users,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
+  ChevronDown,
   CalendarDays,
   Clock,
   Timer,
@@ -45,6 +47,7 @@ import { toast } from 'sonner'
 import { Toaster } from '@/components/ui/sonner'
 import { generateAttendanceExcel } from './lib/excelExport'
 import { supabase, isSupabaseConfigured } from './lib/supabase'
+import { saveSilentBackup, getBackupHistory, type BackupSnapshot, optimizeDatabase } from './lib/auto-backup'
 import {
   format,
   startOfMonth,
@@ -65,6 +68,7 @@ import {
 
 // Scheduler imports
 import { useUnifiedData, type AppOfficer } from './hooks/use-unified-data'
+import { useAppSetting } from './hooks/use-app-setting'
 import { ScheduleOffDutyButton } from './components/ScheduleOffDutyButton'
 
 // Type for editing officer
@@ -107,7 +111,9 @@ function App() {
   const [showPassword, setShowPassword] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
   const [editingOfficer, setEditingOfficer] = useState<EditingOfficer | null>(null)
+  const [editConfirmText, setEditConfirmText] = useState('')
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [deleteConfirmText, setDeleteConfirmText] = useState('')
   const [officerToDelete, setOfficerToDelete] = useState<string | null>(null)
   const [deleteDutyDialog, setDeleteDutyDialog] = useState<{ open: boolean; dutyRecordId: string }>(
     { open: false, dutyRecordId: '' },
@@ -129,7 +135,41 @@ function App() {
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1)
+  const [showOfficersList, setShowOfficersList] = useState<boolean>(
+    () => localStorage.getItem('bcps-1-show-officers-list') !== 'false'
+  )
+  const [hideNames, setHideNames] = useState<boolean>(
+    () => localStorage.getItem('bcps-1-hide-names') === 'true'
+  )
+  const [historyDialogOpen, setHistoryDialogOpen] = useState(false)
+  const [backupHistory, setBackupHistory] = useState<BackupSnapshot[]>([])
   const OFFICERS_PER_PAGE = 5
+
+  // Settings hooks for Supabase sync
+  const showOfficersSetting = useAppSetting('show_officers_list')
+  const hideNamesSetting = useAppSetting('hide_names')
+
+  // Load settings from Supabase on mount
+  useEffect(() => {
+    const loadSettings = async () => {
+      const showListVal = await showOfficersSetting.load()
+      if (showListVal !== null) setShowOfficersList(showListVal !== 'false')
+
+      const hideNamesVal = await hideNamesSetting.load()
+      if (hideNamesVal !== null) setHideNames(hideNamesVal === 'true')
+    }
+    loadSettings()
+  }, [showOfficersSetting.load, hideNamesSetting.load])
+
+  // Persist Officers List visibility preference
+  useEffect(() => {
+    showOfficersSetting.save(String(showOfficersList))
+  }, [showOfficersList, showOfficersSetting.save])
+
+  // Persist hide names preference
+  useEffect(() => {
+    hideNamesSetting.save(String(hideNames))
+  }, [hideNames, hideNamesSetting.save])
 
   // Reset pagination when search changes
   useEffect(() => {
@@ -140,6 +180,21 @@ function App() {
   useEffect(() => {
     refreshData()
   }, [refreshData])
+
+  // Save silent backup when data updates
+  useEffect(() => {
+    if (!loading && officers.length > 0) {
+      saveSilentBackup(officers, dutyRecords)
+      
+      // Run database optimization to purge old records and free storage (once a day)
+      const lastOptimization = localStorage.getItem('bcps-1-last-optimization')
+      const today = new Date().toDateString()
+      if (lastOptimization !== today) {
+        optimizeDatabase()
+        localStorage.setItem('bcps-1-last-optimization', today)
+      }
+    }
+  }, [officers, dutyRecords, loading])
 
   // Handle add officer
   const handleAddOfficer = async () => {
@@ -224,6 +279,7 @@ function App() {
   // Handle delete
   const handleDelete = (officerId: string) => {
     setOfficerToDelete(officerId)
+    setDeleteConfirmText('')
     setDeleteDialogOpen(true)
   }
 
@@ -243,6 +299,7 @@ function App() {
 
   // Handle edit
   const handleEdit = (officer: AppOfficer) => {
+    setEditConfirmText('')
     setEditingOfficer({
       id: officer.id,
       name: officer.name,
@@ -453,7 +510,7 @@ function App() {
 
       <main className="container mx-auto px-4 py-8 max-w-7xl">
         {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
           <Card className="bg-gradient-to-r from-green-500 to-green-600 text-white border-0 shadow-lg">
             <CardContent className="p-6 flex items-center justify-between">
               <div>
@@ -476,10 +533,21 @@ function App() {
               </div>
             </CardContent>
           </Card>
+          <Card className="bg-gradient-to-r from-blue-500 to-blue-600 text-white border-0 shadow-lg">
+            <CardContent className="p-6 flex items-center justify-between">
+              <div>
+                <p className="text-blue-100 text-sm font-medium">TOTAL OFFICERS</p>
+                <p className="text-4xl font-bold">{officers.length}</p>
+              </div>
+              <div className="bg-white/20 p-4 rounded-full">
+                <Users className="w-8 h-8" />
+              </div>
+            </CardContent>
+          </Card>
         </div>
 
         {/* Export & Backup Buttons */}
-        <div className="flex justify-end gap-2 mb-4">
+        <div className="flex justify-end gap-2 mb-6">
           <input
             type="file"
             accept=".json"
@@ -546,6 +614,18 @@ function App() {
             }}
           />
           <Button
+            onClick={async () => {
+              const history = await getBackupHistory();
+              setBackupHistory(history);
+              setHistoryDialogOpen(true);
+            }}
+            variant="outline"
+            className="border-amber-600 text-amber-600 hover:bg-amber-50"
+          >
+            <Clock className="w-4 h-4 mr-2" />
+            History
+          </Button>
+          <Button
             onClick={() => document.getElementById('backup-upload')?.click()}
             variant="outline"
             className="border-purple-600 text-purple-600 hover:bg-purple-50"
@@ -598,18 +678,6 @@ function App() {
             Export to Excel
           </Button>
         </div>
-
-        <Card className="bg-gradient-to-r from-blue-500 to-blue-600 text-white border-0 shadow-lg">
-          <CardContent className="p-6 flex items-center justify-between">
-            <div>
-              <p className="text-blue-100 text-sm font-medium">TOTAL OFFICERS</p>
-              <p className="text-4xl font-bold">{officers.length}</p>
-            </div>
-            <div className="bg-white/20 p-4 rounded-full">
-              <Users className="w-8 h-8" />
-            </div>
-          </CardContent>
-        </Card>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           {/* Left Column - Officer Management */}
@@ -743,7 +811,10 @@ function App() {
 
             {/* Officer List */}
             <Card className="border-2 border-gray-100 shadow-xl bg-white/80 backdrop-blur">
-              <CardHeader className="bg-gradient-to-r from-gray-50 to-white border-b border-gray-100 py-3">
+              <CardHeader 
+                className="bg-gradient-to-r from-gray-50 to-white border-b border-gray-100 py-3 cursor-pointer select-none transition-colors hover:bg-gray-100"
+                onClick={() => setShowOfficersList(!showOfficersList)}
+              >
                 <CardTitle className="flex items-center gap-2 text-gray-700 text-base">
                   <Users className="w-4 h-4" />
                   Officers List
@@ -761,9 +832,17 @@ function App() {
                     }`}
                     title={`Realtime: ${realtimeStatus}`}
                   />
+                  <Button variant="ghost" size="sm" className="ml-2 h-6 px-2 text-gray-500" onClick={(e) => { e.stopPropagation(); setHideNames(!hideNames); }} title={hideNames ? "Show Names" : "Hide Names"}>
+                    {hideNames ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </Button>
+                  <Button variant="ghost" size="sm" className="ml-1 h-6 px-2 text-gray-500" onClick={(e) => { e.stopPropagation(); setShowOfficersList(!showOfficersList); }}>
+                    {showOfficersList ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                  </Button>
                 </CardTitle>
               </CardHeader>
-              <CardContent className="p-0">
+              {showOfficersList && (
+                <div className="flex flex-col">
+                  <CardContent className="p-0">
                 {filteredOfficers.length === 0 ? (
                   <div className="p-6 text-center text-gray-500">
                     <Users className="w-10 h-10 mx-auto mb-2 text-gray-300" />
@@ -777,7 +856,7 @@ function App() {
                           <div className="flex items-center justify-between">
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2">
-                                <span className="font-medium text-sm truncate">{officer.name}</span>
+                                <span className="font-medium text-sm truncate">{hideNames ? '********' : officer.name}</span>
                                 {officer.currentStatus === 'on-duty' ? (
                                   <Badge className="bg-green-500 text-white text-xs">On Duty</Badge>
                                 ) : (
@@ -792,23 +871,27 @@ function App() {
                               </div>
                             </div>
                              <div className="flex gap-1 ml-2">
-                               <Button
-                                 size="sm"
-                                 onClick={() => handleOnDuty(officer.id)}
-                                 className="bg-green-600 hover:bg-green-700 text-white h-7 px-2 text-xs"
-                               >
-                                 <UserCheck className="w-3 h-3 mr-1" />
-                                 On
-                               </Button>
-                               <Button
-                                 size="sm"
-                                 onClick={() => handleOffDuty(officer.id)}
-                                 variant="outline"
-                                 className="border-orange-400 text-orange-600 hover:bg-orange-50 h-7 px-2 text-xs"
-                               >
-                                 <UserX className="w-3 h-3 mr-1" />
-                                 Off
-                               </Button>
+                               {officer.currentStatus !== 'on-duty' && (
+                                 <Button
+                                   size="sm"
+                                   onClick={() => handleOnDuty(officer.id)}
+                                   className="bg-green-600 hover:bg-green-700 text-white h-7 px-2 text-xs"
+                                 >
+                                   <UserCheck className="w-3 h-3 mr-1" />
+                                   On
+                                 </Button>
+                               )}
+                               {officer.currentStatus !== 'off-duty' && (
+                                 <Button
+                                   size="sm"
+                                   onClick={() => handleOffDuty(officer.id)}
+                                   variant="outline"
+                                   className="border-orange-400 text-orange-600 hover:bg-orange-50 h-7 px-2 text-xs"
+                                 >
+                                   <UserX className="w-3 h-3 mr-1" />
+                                   Off
+                                 </Button>
+                               )}
                                {officer.currentStatus === 'on-duty' && (
                                  <ScheduleOffDutyButton
                                    officerId={officer.id}
@@ -873,6 +956,8 @@ function App() {
                   </div>
                 )}
               </CardContent>
+                </div>
+              )}
             </Card>
           </div>
 
@@ -1364,13 +1449,25 @@ function App() {
                   onChange={(e) => setEditingOfficer({ ...editingOfficer, unit: e.target.value })}
                 />
               </div>
+              <div className="space-y-2 mt-4 pt-4 border-t">
+                <label className="text-sm font-medium text-red-600">Authorization Required</label>
+                <DialogDescription>
+                  Please type <span className="font-bold underline">bcps1</span> to confirm changes.
+                </DialogDescription>
+                <Input
+                  value={editConfirmText}
+                  onChange={(e) => setEditConfirmText(e.target.value)}
+                  placeholder="Type bcps1"
+                  className="border-red-200 focus-visible:ring-red-500"
+                />
+              </div>
             </div>
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditingOfficer(null)}>
               Cancel
             </Button>
-            <Button onClick={saveEdit} className="bg-blue-700 hover:bg-blue-800" disabled={loading}>
+            <Button onClick={saveEdit} className="bg-blue-700 hover:bg-blue-800" disabled={loading || editConfirmText !== 'bcps1'}>
               Save Changes
             </Button>
           </DialogFooter>
@@ -1422,15 +1519,106 @@ function App() {
             <DialogTitle>Confirm Remove</DialogTitle>
             <DialogDescription>
               Are you sure you want to remove this officer from the officer list?
+              <br/><br/>
+              Please type <span className="font-bold underline">bcps1</span> to confirm.
             </DialogDescription>
           </DialogHeader>
+          <div className="py-2">
+            <Input 
+              value={deleteConfirmText}
+              onChange={(e) => setDeleteConfirmText(e.target.value)}
+              placeholder="Type bcps1"
+              className="border-red-200 focus-visible:ring-red-500"
+            />
+          </div>
           <DialogFooter className="gap-2">
             <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>
               Cancel
             </Button>
-            <Button variant="destructive" onClick={confirmDelete} disabled={loading}>
+            <Button variant="destructive" onClick={confirmDelete} disabled={loading || deleteConfirmText !== 'bcps1'}>
               Remove
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Backup History Dialog */}
+      <Dialog open={historyDialogOpen} onOpenChange={setHistoryDialogOpen}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Clock className="w-5 h-5 text-amber-600" />
+              Backup History
+            </DialogTitle>
+            <DialogDescription>
+              The system automatically creates daily backups in your browser's offline storage. Select a backup to restore if needed.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            {backupHistory.length === 0 ? (
+              <div className="text-center py-8 text-gray-500">
+                <Clock className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+                <p>No backup history available yet.</p>
+              </div>
+            ) : (
+              <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-2">
+                {backupHistory.map((snapshot) => (
+                  <div key={snapshot.id} className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50 transition-colors">
+                    <div>
+                      <div className="font-medium text-gray-900 flex items-center gap-2">
+                        {format(new Date(snapshot.timestamp), 'PPpp')}
+                        {snapshot.type === 'auto' ? (
+                          <Badge variant="secondary" className="text-xs">Auto</Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-xs">Manual</Badge>
+                        )}
+                      </div>
+                      <div className="text-sm text-gray-500 mt-1">
+                        {snapshot.officers.length} Officers • {snapshot.dutyRecords.length} Duty Records
+                      </div>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-amber-700 hover:text-amber-800 hover:bg-amber-50"
+                      onClick={() => {
+                        const restoreData = {
+                          officers: snapshot.officers,
+                          dutyRecords: snapshot.dutyRecords
+                        };
+                        const blob = new Blob([JSON.stringify(restoreData)], { type: 'application/json' });
+                        const file = new File([blob], 'backup.json', { type: 'application/json' });
+                        
+                        // Fake an event for the existing restore logic
+                        const fakeEvent = {
+                          target: { files: [file], value: '' }
+                        } as any;
+                        
+                        document.getElementById('backup-upload')?.dispatchEvent(new Event('change', { bubbles: true }));
+                        
+                        // Execute the logic manually
+                        const dt = new DataTransfer();
+                        dt.items.add(file);
+                        const input = document.getElementById('backup-upload') as HTMLInputElement;
+                        if (input) {
+                          input.files = dt.files;
+                          const event = new Event('change', { bubbles: true });
+                          input.dispatchEvent(event);
+                        }
+                        
+                        setHistoryDialogOpen(false);
+                      }}
+                    >
+                      <Upload className="w-4 h-4 mr-2" />
+                      Restore
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button onClick={() => setHistoryDialogOpen(false)}>Close</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

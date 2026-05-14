@@ -90,10 +90,10 @@ const loadFromLocalBackup = (): { records: DutyRecord[]; isFresh: boolean } => {
   return { records: [], isFresh: false };
 };
 
-// Get current year date range to show historical data (Jan, Feb, Mar...)
+// Get rolling 3-month window to minimize Supabase egress
 const getCurrentMonthRange = () => {
   const now = new Date();
-  const start = new Date(now.getFullYear(), 0, 1).toISOString().split('T')[0]; // Jan 1st of current year
+  const start = new Date(now.getFullYear(), now.getMonth() - 2, 1).toISOString().split('T')[0]; 
   const end = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
   return { start, end };
 };

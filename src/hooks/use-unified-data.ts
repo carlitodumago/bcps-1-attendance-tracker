@@ -139,7 +139,7 @@ export function useUnifiedData(onTaskExecute?: (task: ScheduledTask) => void): U
     fetchTasks: fetchDbTasks,
     loading: tasksLoading,
     error: tasksError,
-  } = useSupabaseScheduledTasks();
+  } = useSupabaseScheduledTasks(undefined, onTaskExecute, checkOutDbOfficer);
 
   // Local storage state for officers
   const [localOfficers, setLocalOfficers] = useState<AppOfficer[]>(() => {
@@ -359,6 +359,7 @@ const checkInOfficer = useCallback(async (officerId: string) => {
     if (supabaseAvailable) {
       try {
         await checkInDbOfficer(officerId);
+        await refreshOfficers();
       } catch (error) {
         // Rollback on error
         setSyncedOfficers(originalOfficers);
@@ -416,6 +417,8 @@ const checkInOfficer = useCallback(async (officerId: string) => {
           }
           throw new Error('Failed to check out officer');
         }
+        
+        await refreshOfficers();
         return result;
       } catch (error) {
         // Rollback on error

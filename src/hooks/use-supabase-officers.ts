@@ -65,7 +65,7 @@ const DEFAULT_RETRY_CONFIG: RetryConfig = {
 const OFFICERS_STORAGE_KEY = 'bcps-1-officers-backup';
 const OFFICERS_CACHE_TS_KEY = 'bcps-1-officers-cache-ts';
 // Serve from cache if younger than 3 minutes — avoids re-fetch on remount
-const CACHE_TTL_MS = 3 * 60 * 1000;
+const CACHE_TTL_MS = 0;
 
 // Only these columns are needed by the app — avoids pulling search_vector etc.
 const OFFICER_SELECT_COLS = 'id,name,rank,badge_number,unit,current_status,created_at,updated_at,created_by';

@@ -77,7 +77,7 @@ const loadFromLocalBackup = (): { tasks: ScheduledTask[]; isFresh: boolean } => 
   return { tasks: [], isFresh: false };
 };
 
-export function useSupabaseScheduledTasks(retryConfig: RetryConfig = DEFAULT_RETRY_CONFIG): UseSupabaseScheduledTasksReturn {
+export function useSupabaseScheduledTasks(retryConfig: RetryConfig = DEFAULT_RETRY_CONFIG, onTaskExecute?: (task: ScheduledTask) => void, checkOutOfficer?: (officerId: string) => Promise<void>): UseSupabaseScheduledTasksReturn {
   const [tasks, setTasks] = useState<ScheduledTask[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -271,6 +271,14 @@ export function useSupabaseScheduledTasks(retryConfig: RetryConfig = DEFAULT_RET
         if (err) throw err;
       });
       setTasks(current => { saveToLocalBackup(current); return current; });
+      if (onTaskExecute) onTaskExecute(original);
+      if (original.scheduledStatus === 'off-duty' && checkOutOfficer) {
+        try {
+          await checkOutOfficer(original.officerId);
+        } catch (error) {
+          console.error(`Failed to auto-checkout ${original.officerName}:`, error);
+        }
+      }
       return true;
     } catch (err) {
       if (isMountedRef.current) { setTasks(prev => prev.map(t => t.id === taskId ? original : t)); setError(parseError(err)); }
