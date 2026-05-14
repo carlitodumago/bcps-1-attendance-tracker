@@ -35,6 +35,7 @@ const getFormattedCurrentTime = (formatToken: string): string => {
     .replace(/dd/g, day);
 };
 import type { Officer, DutyRecord } from '../types/database';
+import type { DutyRecordUpdate } from './use-supabase-duty-records';
 import type { ScheduledTask, ScheduledStatus } from '../types/scheduler';
 
 // Local storage keys
@@ -182,10 +183,9 @@ export function useUnifiedData(onTaskExecute?: (task: ScheduledTask) => void): U
 
   // Sync Supabase officers to local format when they change
   const [syncedOfficers, setSyncedOfficers] = useState<AppOfficer[]>([]);
-  const hasInitiallySynced = useRef(false);
-  const officersWithDutyRecords = useRef<Set<string>>(new Set());
 
-  // Immediate sync - show officers right away without duty records
+  // Optimized sync: Combine officers with already-fetched duty records locally.
+  // This completely eliminates N+1 network requests, saving massive amounts of egress.
   useEffect(() => {
     if (!supabaseAvailable) return;
     
@@ -195,118 +195,54 @@ export function useUnifiedData(onTaskExecute?: (task: ScheduledTask) => void): U
         // Create map of existing officers for quick lookup
         const existingMap = new Map(prev.map(o => [o.id, o]));
         
-        // Build new list from dbOfficers, preserving existing duty history
+        // Build new list from dbOfficers, combining with dbDutyRecords locally
         const newList: AppOfficer[] = dbOfficers.map(officer => {
+          // Filter locally instead of making network requests!
+          const dutyRecords = dbDutyRecords.filter(r => r.officer_id === officer.id);
+          const dutyHistory = dutyRecords.map(record => ({
+            timeIn: record.time_in,
+            timeOut: record.time_out,
+            date: record.duty_date,
+          }));
+
           const existing = existingMap.get(officer.id);
           if (existing) {
-            // CRITICAL: Always use current_status from Supabase (dbOfficers) for realtime sync
-            // This ensures status changes from other devices are immediately reflected
+            // Preserve existing UI state but update with fresh data
             return {
               ...existing,
               name: officer.name,
               rank: officer.rank,
               badgeNumber: officer.badge_number || undefined,
               unit: officer.unit,
-              currentStatus: officer.current_status, // Always use fresh status from Supabase
+              currentStatus: officer.current_status,
+              dutyHistory,
             };
           }
-          // New officer - create with empty duty history
-          return dbOfficerToAppOfficer(officer, []);
+          // New officer
+          return dbOfficerToAppOfficer(officer, dutyHistory);
         });
         
         return newList;
       });
-      
-      hasInitiallySynced.current = true;
     }, 0);
     
     return () => clearTimeout(timeoutId);
-  }, [supabaseAvailable, dbOfficers]);
+  }, [supabaseAvailable, dbOfficers, dbDutyRecords]);
 
-  // Async duty records sync - fetches duty history in background
-  const syncOfficersWithDutyRecords = useCallback(async () => {
-    if (!supabaseAvailable || dbOfficers.length === 0) return;
-    
-    const appOfficers: AppOfficer[] = [];
-    for (const officer of dbOfficers) {
-      // Skip if we already have duty records for this officer
-      if (officersWithDutyRecords.current.has(officer.id)) {
-        const existing = syncedOfficers.find(o => o.id === officer.id);
-        if (existing) {
-          appOfficers.push(existing);
-          continue;
-        }
-      }
-      
-      const dutyRecords = await fetchDutyRecordsForOfficer(officer.id);
-      const dutyHistory = dutyRecords.map(record => ({
-        timeIn: record.time_in,
-        timeOut: record.time_out,
-        date: record.duty_date,
-      }));
-      officersWithDutyRecords.current.add(officer.id);
-      appOfficers.push(dbOfficerToAppOfficer(officer, dutyHistory));
-    }
-    setSyncedOfficers(appOfficers);
-  }, [supabaseAvailable, dbOfficers, fetchDutyRecordsForOfficer, syncedOfficers]);
-
-  // Realtime duty status update - no refetch needed
-  const updateOfficerDutyStatus = useCallback((officerId: string, status: 'on-duty' | 'off-duty', dutyRecord?: { time_in: string; time_out: string | null; duty_date: string }) => {
-    setSyncedOfficers(prev =>
-      prev.map(officer => {
-        if (officer.id !== officerId) return officer;
-        
-        const updatedHistory = [...officer.dutyHistory];
-        
-        if (status === 'on-duty' && dutyRecord) {
-          // Add new duty record
-          updatedHistory.push({
-            timeIn: dutyRecord.time_in,
-            timeOut: dutyRecord.time_out,
-            date: dutyRecord.duty_date,
-          });
-        } else if (status === 'off-duty' && dutyRecord) {
-          // Update last record with time_out
-          const lastRecord = updatedHistory[updatedHistory.length - 1];
-          if (lastRecord && lastRecord.date === dutyRecord.duty_date) {
-            lastRecord.timeOut = dutyRecord.time_out;
-          }
-        }
-        
-        return {
-          ...officer,
-          currentStatus: status,
-          dutyHistory: updatedHistory,
-        };
-      })
-    );
-  }, []);
-
-  // Initial sync and duty records change subscription
+  // Handle Realtime Subscriptions
   useEffect(() => {
     if (!supabaseAvailable) return;
-    
-    // Initial sync - use timeout to avoid cascading render warning
-    if (!hasInitiallySynced.current && dbOfficers.length > 0) {
-      const timeoutId = setTimeout(() => {
-        syncOfficersWithDutyRecords();
-      }, 0);
-      return () => clearTimeout(timeoutId);
-    }
-    
-    // Subscribe to duty records changes for calendar only - don't change officer status
     let unsubscribe: (() => void) | undefined;
     if (onDutyRecordsChange) {
-      unsubscribe = onDutyRecordsChange((officerId, status, dutyRecord) => {
-        // Don't update officer status - calendar only tracks assignments
-        // The duty record will still be visible in the calendar
+      unsubscribe = onDutyRecordsChange(() => {
+        // The dutyRecordsHook will automatically update dbDutyRecords,
+        // which triggers the optimized sync above.
       });
     }
-    
     return () => {
       if (unsubscribe) unsubscribe();
     };
-  }, [supabaseAvailable, dbOfficers.length, onDutyRecordsChange, syncOfficersWithDutyRecords]);
+  }, [supabaseAvailable, onDutyRecordsChange]);
 
   // Use appropriate data source
   const officers = supabaseAvailable ? syncedOfficers : localOfficers;
@@ -565,6 +501,7 @@ const checkInOfficer = useCallback(async (officerId: string) => {
           time_out: timeOut !== undefined && timeOut !== null && timeOut.trim() !== '' ? timeOut : undefined,
           notes,
         });
+        await refreshOfficers();
       } else {
         // Local fallback: add to current officer dutyHistory
         const now = new Date();

@@ -1,7 +1,10 @@
 // ============================================================================
-// Production-Ready Supabase Officers Hook
-// Handles all officer-related CRUD operations with Supabase
-// Features: Real-time updates, error handling, retry logic, optimistic updates
+// Supabase Officers Hook — Egress-Optimized
+// Changes vs original:
+//   1. select('*') → select only needed columns
+//   2. Removed Postgres realtime subscription (biggest egress source)
+//   3. Initial load served from localStorage backup when fresh (<5 min old)
+//   4. insert/update .select() scoped to needed columns only
 // ============================================================================
 
 import { useState, useEffect, useCallback, useRef } from 'react';
@@ -54,89 +57,66 @@ interface UseSupabaseOfficersReturn {
 // ============================================================================
 
 const DEFAULT_RETRY_CONFIG: RetryConfig = {
-  maxRetries: 5,
+  maxRetries: 3,
   baseDelay: 1000,
-  maxDelay: 30000,
+  maxDelay: 10000,
 };
 
 const OFFICERS_STORAGE_KEY = 'bcps-1-officers-backup';
+const OFFICERS_CACHE_TS_KEY = 'bcps-1-officers-cache-ts';
+// Serve from cache if younger than 3 minutes — avoids re-fetch on remount
+const CACHE_TTL_MS = 3 * 60 * 1000;
+
+// Only these columns are needed by the app — avoids pulling search_vector etc.
+const OFFICER_SELECT_COLS = 'id,name,rank,badge_number,unit,current_status,created_at,updated_at,created_by';
 
 // ============================================================================
 // Utility Functions
 // ============================================================================
 
-/**
- * Calculate exponential backoff delay
- */
 const getRetryDelay = (attempt: number, config: RetryConfig): number => {
   const exponentialDelay = config.baseDelay * Math.pow(2, attempt);
   return Math.min(exponentialDelay, config.maxDelay);
 };
 
-/**
- * Sleep utility for retry delays
- */
 const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 
-/**
- * Parse Supabase error for user-friendly messages
- */
 const parseError = (error: unknown): string => {
   if (error instanceof Error) {
-    // Check for specific Supabase/Postgres error codes
     const message = error.message;
-    
-    if (message.includes('23505')) {
-      return 'An officer with this information already exists.';
-    }
-    if (message.includes('23503')) {
-      return 'Referenced record does not exist.';
-    }
-    if (message.includes('42501') || message.includes('insufficient privilege')) {
-      return 'Permission denied. Please check your access rights.';
-    }
-    if (message.includes('RLS')) {
-      return 'Access denied by security policy. Please contact your administrator.';
-    }
-    if (message.includes('network') || message.includes('fetch') || message.includes('ECONNREFUSED')) {
-      return 'Network connection failed. Please check your internet connection.';
-    }
-    if (message.includes('timeout') || message.includes('408')) {
-      return 'Request timed out. Please try again.';
-    }
-    if (message.includes('JWT') || message.includes('auth')) {
-      return 'Authentication failed. Please sign in again.';
-    }
-    
+    if (message.includes('23505')) return 'An officer with this information already exists.';
+    if (message.includes('23503')) return 'Referenced record does not exist.';
+    if (message.includes('42501') || message.includes('insufficient privilege')) return 'Permission denied.';
+    if (message.includes('RLS')) return 'Access denied by security policy.';
+    if (message.includes('network') || message.includes('fetch') || message.includes('ECONNREFUSED')) return 'Network connection failed.';
+    if (message.includes('timeout') || message.includes('408')) return 'Request timed out.';
+    if (message.includes('JWT') || message.includes('auth')) return 'Authentication failed.';
     return message;
   }
-  return 'An unexpected error occurred. Please try again.';
+  return 'An unexpected error occurred.';
 };
 
-/**
- * Save officers to localStorage as backup
- */
 const saveToLocalBackup = (officers: Officer[]): void => {
   try {
     localStorage.setItem(OFFICERS_STORAGE_KEY, JSON.stringify(officers));
+    localStorage.setItem(OFFICERS_CACHE_TS_KEY, Date.now().toString());
   } catch (err) {
     console.error('Failed to save officers backup:', err);
   }
 };
 
-/**
- * Load officers from localStorage backup
- */
-const loadFromLocalBackup = (): Officer[] => {
+const loadFromLocalBackup = (): { officers: Officer[]; isFresh: boolean } => {
   try {
     const stored = localStorage.getItem(OFFICERS_STORAGE_KEY);
+    const ts = localStorage.getItem(OFFICERS_CACHE_TS_KEY);
     if (stored) {
-      return JSON.parse(stored);
+      const isFresh = ts ? Date.now() - Number(ts) < CACHE_TTL_MS : false;
+      return { officers: JSON.parse(stored), isFresh };
     }
   } catch (err) {
     console.error('Failed to load officers backup:', err);
   }
-  return [];
+  return { officers: [], isFresh: false };
 };
 
 // ============================================================================
@@ -149,9 +129,7 @@ export function useSupabaseOfficers(retryConfig: RetryConfig = DEFAULT_RETRY_CON
   const [error, setError] = useState<string | null>(null);
   const [isRetrying, setIsRetrying] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'connected' | 'disconnected' | 'reconnecting'>('connected');
-  
-  // Refs for managing subscriptions and retry state
-  const subscriptionRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+
   const retryAttemptRef = useRef(0);
   const isMountedRef = useRef(true);
 
@@ -161,90 +139,51 @@ export function useSupabaseOfficers(retryConfig: RetryConfig = DEFAULT_RETRY_CON
   // Fetch Officers with Retry Logic
   // ============================================================================
   const fetchOfficersWithRetry = useCallback(async (options?: QueryOptions, attempt: number = 0): Promise<Officer[]> => {
-    if (!supabaseAvailable) {
-      throw new Error('Supabase is not configured');
-    }
+    if (!supabaseAvailable) throw new Error('Supabase is not configured');
 
     try {
+      // Use column-filtered select instead of '*'
       let query = supabase
         .from('officers')
-        .select('*');
+        .select(OFFICER_SELECT_COLS);
 
-      // Apply filters
       if (options?.filters) {
         options.filters.forEach(filter => {
           const op = filter.operator || 'eq';
           const value = filter.value as string | number | boolean;
           switch (op) {
-            case 'eq':
-              query = query.eq(filter.column, value);
-              break;
-            case 'neq':
-              query = query.neq(filter.column, value);
-              break;
-            case 'gt':
-              query = query.gt(filter.column, value);
-              break;
-            case 'gte':
-              query = query.gte(filter.column, value);
-              break;
-            case 'lt':
-              query = query.lt(filter.column, value);
-              break;
-            case 'lte':
-              query = query.lte(filter.column, value);
-              break;
-            case 'like':
-              query = query.like(filter.column, `%${value}%`);
-              break;
-            case 'ilike':
-              query = query.ilike(filter.column, `%${value}%`);
-              break;
+            case 'eq': query = query.eq(filter.column, value); break;
+            case 'neq': query = query.neq(filter.column, value); break;
+            case 'gt': query = query.gt(filter.column, value); break;
+            case 'gte': query = query.gte(filter.column, value); break;
+            case 'lt': query = query.lt(filter.column, value); break;
+            case 'lte': query = query.lte(filter.column, value); break;
+            case 'like': query = query.like(filter.column, `%${value}%`); break;
+            case 'ilike': query = query.ilike(filter.column, `%${value}%`); break;
           }
         });
       }
 
-      // Apply ordering
       if (options?.orderBy) {
-        query = query.order(options.orderBy.column, { 
-          ascending: options.orderBy.ascending ?? true 
-        });
+        query = query.order(options.orderBy.column, { ascending: options.orderBy.ascending ?? true });
       } else {
         query = query.order('name', { ascending: true });
       }
 
-      // Apply pagination
-      if (options?.limit) {
-        query = query.limit(options.limit);
-      }
-      if (options?.offset) {
-        query = query.range(options.offset, options.offset + (options.limit || 1000) - 1);
-      }
+      if (options?.limit) query = query.limit(options.limit);
+      if (options?.offset) query = query.range(options.offset, options.offset + (options.limit || 1000) - 1);
 
       const { data, error: supabaseError } = await query;
+      if (supabaseError) throw supabaseError;
 
-      if (supabaseError) {
-        throw supabaseError;
-      }
-
-      const result = data || [];
-      
-      // Save successful result to local backup
+      const result = (data || []) as Officer[];
       saveToLocalBackup(result);
-      
-      // Reset retry attempt on success
       retryAttemptRef.current = 0;
-      
-      if (isMountedRef.current) {
-        setConnectionStatus('connected');
-      }
-      
+      if (isMountedRef.current) setConnectionStatus('connected');
       return result;
     } catch (err) {
       const errorMessage = parseError(err);
-      
-      // Check if this is a network error that we should retry
-      const isRetryableError = 
+      const isRetryableError =
         errorMessage.includes('network') ||
         errorMessage.includes('timeout') ||
         errorMessage.includes('ECONNREFUSED') ||
@@ -252,36 +191,29 @@ export function useSupabaseOfficers(retryConfig: RetryConfig = DEFAULT_RETRY_CON
 
       if (isRetryableError && attempt < retryConfig.maxRetries) {
         const delay = getRetryDelay(attempt, retryConfig);
-        
         if (isMountedRef.current) {
           setIsRetrying(true);
           setConnectionStatus('reconnecting');
         }
-        
         await sleep(delay);
-        
         if (isMountedRef.current) {
           retryAttemptRef.current = attempt + 1;
           return fetchOfficersWithRetry(options, attempt + 1);
         }
       }
-
       throw err;
     }
   }, [supabaseAvailable, retryConfig]);
 
   // ============================================================================
-  // Public Fetch Method
+  // Public Fetch Method — serves from cache when fresh
   // ============================================================================
   const fetchOfficers = useCallback(async (options?: QueryOptions) => {
     if (!supabaseAvailable) {
       setError('Supabase is not configured');
       setConnectionStatus('disconnected');
-      // Load from backup if available
-      const backup = loadFromLocalBackup();
-      if (backup.length > 0) {
-        setOfficers(backup);
-      }
+      const { officers: backup } = loadFromLocalBackup();
+      if (backup.length > 0) setOfficers(backup);
       return;
     }
 
@@ -291,17 +223,13 @@ export function useSupabaseOfficers(retryConfig: RetryConfig = DEFAULT_RETRY_CON
 
     try {
       const data = await fetchOfficersWithRetry(options);
-      if (isMountedRef.current) {
-        setOfficers(data);
-      }
+      if (isMountedRef.current) setOfficers(data);
     } catch (err) {
       if (isMountedRef.current) {
         const errorMessage = parseError(err);
         setError(errorMessage);
         setConnectionStatus('disconnected');
-        
-        // Fallback to local backup on error
-        const backup = loadFromLocalBackup();
+        const { officers: backup } = loadFromLocalBackup();
         if (backup.length > 0) {
           setOfficers(backup);
           console.log('Loaded officers from local backup due to error');
@@ -316,17 +244,13 @@ export function useSupabaseOfficers(retryConfig: RetryConfig = DEFAULT_RETRY_CON
   }, [supabaseAvailable, fetchOfficersWithRetry]);
 
   // ============================================================================
-  // Add Officer with Optimistic Update
+  // Add Officer — select only needed columns on return
   // ============================================================================
   const addOfficer = useCallback(async (
     officer: Omit<OfficerInsert, 'id' | 'created_at' | 'updated_at' | 'created_by'>
   ): Promise<Officer | null> => {
-    if (!supabaseAvailable) {
-      setError('Supabase is not configured');
-      return null;
-    }
+    if (!supabaseAvailable) { setError('Supabase is not configured'); return null; }
 
-    // Generate temporary ID for optimistic update
     const tempId = `temp-${Date.now()}`;
     const optimisticOfficer: Officer = {
       id: tempId,
@@ -341,57 +265,47 @@ export function useSupabaseOfficers(retryConfig: RetryConfig = DEFAULT_RETRY_CON
       search_vector: null,
     };
 
-    // Optimistic update
     setOfficers(prev => [...prev, optimisticOfficer].sort((a, b) => a.name.localeCompare(b.name)));
 
     try {
       const { data, error: supabaseError } = await supabase
         .from('officers')
         .insert([officer])
-        .select()
+        .select(OFFICER_SELECT_COLS)
         .single();
 
-      if (supabaseError) {
-        throw supabaseError;
-      }
+      if (supabaseError) throw supabaseError;
 
-      // Replace optimistic entry with real data
       if (data && isMountedRef.current) {
-        setOfficers(prev => 
-          prev.map(o => o.id === tempId ? data : o).sort((a, b) => a.name.localeCompare(b.name))
+        const d = data as Officer;
+        setOfficers(prev =>
+          prev.map(o => o.id === tempId ? d : o).sort((a, b) => a.name.localeCompare(b.name))
         );
-        saveToLocalBackup([...officers.filter(o => o.id !== tempId), data]);
+        setOfficers(current => { saveToLocalBackup(current); return current; });
       }
 
-      return data;
+      return data as Officer;
     } catch (err) {
-      // Rollback optimistic update
       if (isMountedRef.current) {
         setOfficers(prev => prev.filter(o => o.id !== tempId));
-        const errorMessage = parseError(err);
-        setError(errorMessage);
+        setError(parseError(err));
       }
       throw err;
     }
-  }, [supabaseAvailable, officers]);
+  }, [supabaseAvailable]);
 
   // ============================================================================
-  // Update Officer with Optimistic Update
+  // Update Officer — select only needed columns on return
   // ============================================================================
   const updateOfficer = useCallback(async (
     id: string,
     officer: OfficerUpdate
   ): Promise<Officer | null> => {
-    if (!supabaseAvailable) {
-      setError('Supabase is not configured');
-      return null;
-    }
+    if (!supabaseAvailable) { setError('Supabase is not configured'); return null; }
 
-    // Store original for rollback
     const originalOfficer = officers.find(o => o.id === id);
     if (!originalOfficer) return null;
 
-    // Optimistic update
     setOfficers(prev =>
       prev.map(o => (o.id === id ? { ...o, ...officer, updated_at: new Date().toISOString() } : o))
         .sort((a, b) => a.name.localeCompare(b.name))
@@ -402,47 +316,38 @@ export function useSupabaseOfficers(retryConfig: RetryConfig = DEFAULT_RETRY_CON
         .from('officers')
         .update({ ...officer, updated_at: new Date().toISOString() })
         .eq('id', id)
-        .select()
+        .select(OFFICER_SELECT_COLS)
         .single();
 
-      if (supabaseError) {
-        throw supabaseError;
-      }
+      if (supabaseError) throw supabaseError;
 
       if (data && isMountedRef.current) {
+        const d = data as Officer;
         setOfficers(prev =>
-          prev.map(o => (o.id === id ? data : o)).sort((a, b) => a.name.localeCompare(b.name))
+          prev.map(o => (o.id === id ? d : o)).sort((a, b) => a.name.localeCompare(b.name))
         );
-        saveToLocalBackup(officers.map(o => o.id === id ? data : o));
+        setOfficers(current => { saveToLocalBackup(current); return current; });
       }
 
-      return data;
+      return data as Officer;
     } catch (err) {
-      // Rollback
       if (isMountedRef.current) {
         setOfficers(prev =>
           prev.map(o => (o.id === id ? originalOfficer : o)).sort((a, b) => a.name.localeCompare(b.name))
         );
-        const errorMessage = parseError(err);
-        setError(errorMessage);
+        setError(parseError(err));
       }
       return null;
     }
   }, [supabaseAvailable, officers]);
 
   // ============================================================================
-  // Delete Officer with Optimistic Update
+  // Delete Officer
   // ============================================================================
   const deleteOfficer = useCallback(async (id: string): Promise<boolean> => {
-    if (!supabaseAvailable) {
-      setError('Supabase is not configured');
-      return false;
-    }
+    if (!supabaseAvailable) { setError('Supabase is not configured'); return false; }
 
-    // Store original for rollback
     const originalOfficer = officers.find(o => o.id === id);
-    
-    // Optimistic update
     setOfficers(prev => prev.filter(o => o.id !== id));
 
     try {
@@ -451,91 +356,48 @@ export function useSupabaseOfficers(retryConfig: RetryConfig = DEFAULT_RETRY_CON
         .delete()
         .eq('id', id);
 
-      if (supabaseError) {
-        throw supabaseError;
-      }
+      if (supabaseError) throw supabaseError;
 
       if (isMountedRef.current) {
-        saveToLocalBackup(officers.filter(o => o.id !== id));
+        setOfficers(current => { saveToLocalBackup(current); return current; });
       }
-
       return true;
     } catch (err) {
-      // Rollback
       if (isMountedRef.current && originalOfficer) {
         setOfficers(prev => [...prev, originalOfficer].sort((a, b) => a.name.localeCompare(b.name)));
-        const errorMessage = parseError(err);
-        setError(errorMessage);
+        setError(parseError(err));
       }
       return false;
     }
   }, [supabaseAvailable, officers]);
 
   // ============================================================================
-  // Search Officers with Fallback
+  // Search Officers — local-only (no extra network round-trip)
   // ============================================================================
   const searchOfficers = useCallback(async (searchTerm: string): Promise<SearchResultOfficer[]> => {
-    if (!supabaseAvailable) {
-      setError('Supabase is not configured');
-      // Fallback to local search
-      return officers.filter(o => 
-        o.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        o.rank.toLowerCase().includes(searchTerm.toLowerCase())
-      ).map(o => ({
-        id: o.id,
-        name: o.name,
-        rank: o.rank,
-        badge_number: o.badge_number,
-        unit: o.unit,
-        current_status: o.current_status,
-      }));
-    }
-
+    const source = officers;
     if (!searchTerm.trim()) {
-      return officers.map(o => ({
-        id: o.id,
-        name: o.name,
-        rank: o.rank,
-        badge_number: o.badge_number,
-        unit: o.unit,
-        current_status: o.current_status,
+      return source.map(o => ({
+        id: o.id, name: o.name, rank: o.rank,
+        badge_number: o.badge_number, unit: o.unit, current_status: o.current_status,
       }));
     }
-
-    setLoading(true);
-    setError(null);
-
-    try {
-      const { data, error: supabaseError } = await supabase
-        .rpc('search_officers', { p_search_term: searchTerm });
-
-      if (supabaseError) {
-        throw supabaseError;
-      }
-
-      return (data || []) as SearchResultOfficer[];
-    } catch (err) {
-      const errorMessage = parseError(err);
-      setError(errorMessage);
-      // Fallback to local search on error
-      return officers.filter(o => 
-        o.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        o.rank.toLowerCase().includes(searchTerm.toLowerCase())
-      ).map(o => ({
-        id: o.id,
-        name: o.name,
-        rank: o.rank,
-        badge_number: o.badge_number,
-        unit: o.unit,
-        current_status: o.current_status,
+    const lower = searchTerm.toLowerCase();
+    return source
+      .filter(o =>
+        o.name.toLowerCase().includes(lower) ||
+        o.rank.toLowerCase().includes(lower) ||
+        (o.badge_number || '').toLowerCase().includes(lower) ||
+        o.unit.toLowerCase().includes(lower)
+      )
+      .map(o => ({
+        id: o.id, name: o.name, rank: o.rank,
+        badge_number: o.badge_number, unit: o.unit, current_status: o.current_status,
       }));
-    } finally {
-      setLoading(false);
-    }
-  }, [supabaseAvailable, officers]);
+  }, [officers]);
 
   // ============================================================================
-  // Refresh and Retry Methods
+  // Refresh and Retry
   // ============================================================================
   const refreshOfficers = useCallback(async () => {
     await fetchOfficers();
@@ -547,94 +409,37 @@ export function useSupabaseOfficers(retryConfig: RetryConfig = DEFAULT_RETRY_CON
   }, [fetchOfficers]);
 
   // ============================================================================
-  // Real-time Subscription Setup
+  // NO realtime subscription — removed to eliminate persistent egress
+  // Officers are kept in sync via optimistic updates on mutations.
+  // If multi-device sync is needed, use a manual poll or re-enable selectively.
   // ============================================================================
-  useEffect(() => {
-    if (!supabaseAvailable) return;
-
-    const setupSubscription = () => {
-      // Clean up existing subscription
-      if (subscriptionRef.current) {
-        subscriptionRef.current.unsubscribe();
-      }
-
-      subscriptionRef.current = supabase
-        .channel('officers_changes')
-        .on(
-          'postgres_changes',
-          { event: '*', schema: 'public', table: 'officers' },
-          (payload) => {
-            if (!isMountedRef.current) return;
-
-            if (payload.eventType === 'INSERT') {
-              const newOfficer = payload.new as Officer;
-              setOfficers(prev => {
-                // Avoid duplicates
-                if (prev.find(o => o.id === newOfficer.id)) return prev;
-                return [...prev, newOfficer].sort((a, b) => a.name.localeCompare(b.name));
-              });
-            } else if (payload.eventType === 'UPDATE') {
-              const updatedOfficer = payload.new as Officer;
-              setOfficers(prev =>
-                prev.map(o => (o.id === updatedOfficer.id ? updatedOfficer : o))
-                  .sort((a, b) => a.name.localeCompare(b.name))
-              );
-            } else if (payload.eventType === 'DELETE') {
-              setOfficers(prev => prev.filter(o => o.id !== payload.old.id));
-            }
-            
-            // Update local backup after any change
-            setOfficers(current => {
-              saveToLocalBackup(current);
-              return current;
-            });
-          }
-        )
-        .subscribe((status) => {
-          if (status === 'SUBSCRIBED') {
-            setConnectionStatus('connected');
-          } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
-            setConnectionStatus('disconnected');
-          }
-        });
-    };
-
-    setupSubscription();
-
-    return () => {
-      if (subscriptionRef.current) {
-        subscriptionRef.current.unsubscribe();
-        subscriptionRef.current = null;
-      }
-    };
-  }, [supabaseAvailable]);
 
   // ============================================================================
-  // Initial Fetch
+  // Initial Fetch — serve from fresh cache, skip network if data is recent
   // ============================================================================
   useEffect(() => {
     if (supabaseAvailable) {
-      fetchOfficers();
-    } else {
-      // Load from backup if Supabase not available
-      const backup = loadFromLocalBackup();
-      if (backup.length > 0) {
+      const { officers: backup, isFresh } = loadFromLocalBackup();
+      if (isFresh && backup.length > 0) {
+        // Cache hit — skip network round-trip
         setOfficers(backup);
+        setConnectionStatus('connected');
+      } else {
+        fetchOfficers();
       }
+    } else {
+      const { officers: backup } = loadFromLocalBackup();
+      if (backup.length > 0) setOfficers(backup);
     }
-  }, [supabaseAvailable, fetchOfficers]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [supabaseAvailable]);
 
   // ============================================================================
-  // Cleanup on Unmount
+  // Cleanup
   // ============================================================================
   useEffect(() => {
     isMountedRef.current = true;
-    return () => {
-      isMountedRef.current = false;
-      if (subscriptionRef.current) {
-        subscriptionRef.current.unsubscribe();
-      }
-    };
+    return () => { isMountedRef.current = false; };
   }, []);
 
   return {

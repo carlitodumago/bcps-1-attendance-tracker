@@ -37,12 +37,14 @@ import {
   Clock,
   Timer,
   Download,
+  Upload,
   Eye,
   EyeOff,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Toaster } from '@/components/ui/sonner'
 import { generateAttendanceExcel } from './lib/excelExport'
+import { supabase, isSupabaseConfigured } from './lib/supabase'
 import {
   format,
   startOfMonth,
@@ -124,6 +126,15 @@ function App() {
   // Schedule Off-Duty state
   const [scheduleTime, setScheduleTime] = useState<string>('08:00')
   const [isSchedulePopoverOpen, setIsSchedulePopoverOpen] = useState(false)
+
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1)
+  const OFFICERS_PER_PAGE = 5
+
+  // Reset pagination when search changes
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [searchTerm])
 
   // Refresh data when component mounts
   useEffect(() => {
@@ -358,10 +369,16 @@ function App() {
 
   const filteredOfficers = officers.filter(
     (officer) =>
-      officer.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      officer.rank.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      officer.unit.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      officer.badgeNumber?.toLowerCase().includes(searchTerm.toLowerCase()),
+      (officer.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (officer.rank || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (officer.unit || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (officer.badgeNumber || '').toLowerCase().includes(searchTerm.toLowerCase()),
+  )
+
+  const totalPages = Math.ceil(filteredOfficers.length / OFFICERS_PER_PAGE)
+  const paginatedOfficers = filteredOfficers.slice(
+    (currentPage - 1) * OFFICERS_PER_PAGE,
+    currentPage * OFFICERS_PER_PAGE
   )
 
   // Helper to format Supabase time (HH:MM:SS) to 12-hour format - times stored as UTC, add 8 for PH display
@@ -461,8 +478,110 @@ function App() {
           </Card>
         </div>
 
-        {/* Excel Export Button */}
-        <div className="flex justify-end mb-4">
+        {/* Export & Backup Buttons */}
+        <div className="flex justify-end gap-2 mb-4">
+          <input
+            type="file"
+            accept=".json"
+            id="backup-upload"
+            className="hidden"
+            onChange={async (e) => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+
+              try {
+                const text = await file.text();
+                const data = JSON.parse(text);
+                
+                if (!data.officers || !Array.isArray(data.officers) || !data.dutyRecords || !Array.isArray(data.dutyRecords)) {
+                  toast.error('Invalid backup file format');
+                  return;
+                }
+
+                toast.info('Restoring backup... Please wait.');
+
+                if (isSupabaseConfigured()) {
+                  // Map AppOfficer back to DB Officer format
+                  const dbOfficers = data.officers.map((o: any) => ({
+                    id: o.id,
+                    name: o.name,
+                    rank: o.rank,
+                    badge_number: o.badgeNumber || null,
+                    unit: o.unit || 'Unassigned',
+                    current_status: o.currentStatus || 'off-duty',
+                  }));
+
+                  // 1. Insert officers (upsert to handle existing)
+                  if (dbOfficers.length > 0) {
+                    const { error: offErr } = await supabase.from('officers').upsert(dbOfficers);
+                    if (offErr) throw new Error(`Officers restore failed: ${offErr.message}`);
+                  }
+
+                  // 2. Insert duty records (upsert to handle existing)
+                  if (data.dutyRecords.length > 0) {
+                    const { error: dutyErr } = await supabase.from('duty_records').upsert(data.dutyRecords);
+                    if (dutyErr) throw new Error(`Duty records restore failed: ${dutyErr.message}`);
+                  }
+                  
+                  toast.success(`Successfully restored ${dbOfficers.length} officers and ${data.dutyRecords.length} records to Supabase!`);
+                  refreshData();
+                } else {
+                  // Offline mode fallback: restore directly to local storage
+                  localStorage.setItem('bcsp-1-attendance-tracker', JSON.stringify(data.officers));
+                  localStorage.setItem('bcps-1-duty-records-backup', JSON.stringify(data.dutyRecords));
+                  toast.success(`Restored ${data.officers.length} officers in Offline Mode!`);
+                  
+                  // Reload page to apply local storage changes instantly
+                  setTimeout(() => {
+                    window.location.reload();
+                  }, 1500);
+                }
+              } catch (error: any) {
+                console.error('Restore error:', error);
+                toast.error(error.message || 'Failed to restore backup');
+              }
+              
+              // Reset input
+              e.target.value = '';
+            }}
+          />
+          <Button
+            onClick={() => document.getElementById('backup-upload')?.click()}
+            variant="outline"
+            className="border-purple-600 text-purple-600 hover:bg-purple-50"
+          >
+            <Upload className="w-4 h-4 mr-2" />
+            Restore Backup
+          </Button>
+          <Button
+            onClick={() => {
+              try {
+                const backup = {
+                  officers,
+                  dutyRecords,
+                  timestamp: new Date().toISOString()
+                };
+                const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `bcps1-attendance-backup-${new Date().toISOString().split('T')[0]}.json`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                toast.success('Backup downloaded successfully!');
+              } catch (error) {
+                console.error('Backup error:', error);
+                toast.error('Failed to create backup');
+              }
+            }}
+            variant="outline"
+            className="border-blue-600 text-blue-600 hover:bg-blue-50"
+          >
+            <Download className="w-4 h-4 mr-2" />
+            Backup Data (JSON)
+          </Button>
           <Button
             onClick={() => {
               try {
@@ -499,6 +618,8 @@ function App() {
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
               <Input
+                type="search"
+                autoComplete="off"
                 placeholder="Search officers..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
@@ -521,6 +642,7 @@ function App() {
                     <div className="relative">
                       <Input
                         type={showPassword ? "text" : "password"}
+                        autoComplete="new-password"
                         placeholder="Enter password"
                         value={adminPassword}
                         onChange={(e) => setAdminPassword(e.target.value)}
@@ -641,83 +763,113 @@ function App() {
                   />
                 </CardTitle>
               </CardHeader>
-              <CardContent className="p-0 max-h-80 overflow-y-auto">
+              <CardContent className="p-0">
                 {filteredOfficers.length === 0 ? (
                   <div className="p-6 text-center text-gray-500">
                     <Users className="w-10 h-10 mx-auto mb-2 text-gray-300" />
                     <p className="text-sm">No officers registered</p>
                   </div>
                 ) : (
-                  <div className="divide-y divide-gray-100">
-                    {filteredOfficers.map((officer) => (
-                      <div key={officer.id} className="p-3 hover:bg-gray-50">
-                        <div className="flex items-center justify-between">
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="font-medium text-sm truncate">{officer.name}</span>
-                              {officer.currentStatus === 'on-duty' ? (
-                                <Badge className="bg-green-500 text-white text-xs">On Duty</Badge>
-                              ) : (
-                                <Badge variant="outline" className="text-gray-500 text-xs">
-                                  Off Duty
-                                </Badge>
-                              )}
+                  <div className="flex flex-col h-full">
+                    <div className="divide-y divide-gray-100 overflow-y-auto" style={{ minHeight: '340px' }}>
+                      {paginatedOfficers.map((officer) => (
+                        <div key={officer.id} className="p-3 hover:bg-gray-50">
+                          <div className="flex items-center justify-between">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="font-medium text-sm truncate">{officer.name}</span>
+                                {officer.currentStatus === 'on-duty' ? (
+                                  <Badge className="bg-green-500 text-white text-xs">On Duty</Badge>
+                                ) : (
+                                  <Badge variant="outline" className="text-gray-500 text-xs">
+                                    Off Duty
+                                  </Badge>
+                                )}
+                              </div>
+                              <div className="text-xs text-gray-500 mt-0.5">
+                                {officer.rank} {officer.badgeNumber && `• #${officer.badgeNumber}`}{' '}
+                                {officer.unit && `• ${officer.unit}`}
+                              </div>
                             </div>
-                            <div className="text-xs text-gray-500 mt-0.5">
-                              {officer.rank} {officer.badgeNumber && `• #${officer.badgeNumber}`}{' '}
-                              {officer.unit && `• ${officer.unit}`}
-                            </div>
+                             <div className="flex gap-1 ml-2">
+                               <Button
+                                 size="sm"
+                                 onClick={() => handleOnDuty(officer.id)}
+                                 className="bg-green-600 hover:bg-green-700 text-white h-7 px-2 text-xs"
+                               >
+                                 <UserCheck className="w-3 h-3 mr-1" />
+                                 On
+                               </Button>
+                               <Button
+                                 size="sm"
+                                 onClick={() => handleOffDuty(officer.id)}
+                                 variant="outline"
+                                 className="border-orange-400 text-orange-600 hover:bg-orange-50 h-7 px-2 text-xs"
+                               >
+                                 <UserX className="w-3 h-3 mr-1" />
+                                 Off
+                               </Button>
+                               {officer.currentStatus === 'on-duty' && (
+                                 <ScheduleOffDutyButton
+                                   officerId={officer.id}
+                                   officerName={officer.name}
+                                   currentStatus={officer.currentStatus}
+                                   scheduledTask={getTaskForOfficer(officer.id)}
+                                   onSchedule={scheduleTask}
+                                   onCancelSchedule={cancelTask}
+                                   getCountdown={getCountdown}
+                                   compact
+                                 />
+                               )}
+                               <Button
+                                 size="sm"
+                                 variant="ghost"
+                                 onClick={() => handleEdit(officer)}
+                                 className="text-blue-600 hover:bg-blue-50 h-7 w-7 p-0"
+                               >
+                                 <Edit2 className="w-3 h-3" />
+                               </Button>
+                               <Button
+                                 size="sm"
+                                 variant="ghost"
+                                 onClick={() => handleDelete(officer.id)}
+                                 className="text-red-600 hover:bg-red-50 h-7 w-7 p-0"
+                               >
+                                 <Trash2 className="w-3 h-3" />
+                               </Button>
+                             </div>
                           </div>
-                           <div className="flex gap-1 ml-2">
-                             <Button
-                               size="sm"
-                               onClick={() => handleOnDuty(officer.id)}
-                               className="bg-green-600 hover:bg-green-700 text-white h-7 px-2 text-xs"
-                             >
-                               <UserCheck className="w-3 h-3 mr-1" />
-                               On
-                             </Button>
-                             <Button
-                               size="sm"
-                               onClick={() => handleOffDuty(officer.id)}
-                               variant="outline"
-                               className="border-orange-400 text-orange-600 hover:bg-orange-50 h-7 px-2 text-xs"
-                             >
-                               <UserX className="w-3 h-3 mr-1" />
-                               Off
-                             </Button>
-                             {officer.currentStatus === 'on-duty' && (
-                               <ScheduleOffDutyButton
-                                 officerId={officer.id}
-                                 officerName={officer.name}
-                                 currentStatus={officer.currentStatus}
-                                 scheduledTask={getTaskForOfficer(officer.id)}
-                                 onSchedule={scheduleTask}
-                                 onCancelSchedule={cancelTask}
-                                 getCountdown={getCountdown}
-                                 compact
-                               />
-                             )}
-                             <Button
-                               size="sm"
-                               variant="ghost"
-                               onClick={() => handleEdit(officer)}
-                               className="text-blue-600 hover:bg-blue-50 h-7 w-7 p-0"
-                             >
-                               <Edit2 className="w-3 h-3" />
-                             </Button>
-                             <Button
-                               size="sm"
-                               variant="ghost"
-                               onClick={() => handleDelete(officer.id)}
-                               className="text-red-600 hover:bg-red-50 h-7 w-7 p-0"
-                             >
-                               <Trash2 className="w-3 h-3" />
-                             </Button>
-                           </div>
                         </div>
+                      ))}
+                    </div>
+                    {/* Pagination Controls */}
+                    {totalPages > 1 && (
+                      <div className="flex items-center justify-between p-3 border-t border-gray-100 bg-gray-50/50">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                          disabled={currentPage === 1}
+                          className="h-8 text-xs"
+                        >
+                          <ChevronLeft className="w-4 h-4 mr-1" />
+                          Prev
+                        </Button>
+                        <span className="text-xs text-gray-500 font-medium">
+                          Page {currentPage} of {totalPages}
+                        </span>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                          disabled={currentPage === totalPages}
+                          className="h-8 text-xs"
+                        >
+                          Next
+                          <ChevronRight className="w-4 h-4 ml-1" />
+                        </Button>
                       </div>
-                    ))}
+                    )}
                   </div>
                 )}
               </CardContent>
